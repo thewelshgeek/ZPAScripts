@@ -1,0 +1,2588 @@
+AWSTemplateFormatVersion: 2010-09-09
+
+
+Description: >-
+  Creates SSM Function to securely store credentials.  Takes ZPA API Key and ZWS API Key parameters and stores in SSM.
+  Creates NAT gateways in  public subnets, and deploys a Zscaler Private Access connector in each of two Private subnets, 
+  spanned across availability zones.
+  The lambda function creates a Provisioning Key, Connector Group, Server Group, for the App Connectors.  The ZPA App Connectors automatically provision, 
+  retrieving provisioning key from API.
+  Signing Cert lookup MUST find cert with name "Connector" in ZPA Administration console, and will use first one it finds.
+  The ZPA Connectors connect outbound through the NAT Gateways and have no inbound connectivity.
+  DNS Entries for the connectors are created in Route53 so that the connectors can be managed through ZPA.
+  Lambda functions for securely storing SSM, updating Route53, and ZPA API functions are created.
+
+Parameters:
+  IAMUsername:
+    Description: Name of the IAM user who will be the administrator of the KMS key
+      we create. This user will be able to encrypt values and manage the key.
+    Default: "mryan"
+    Type: String
+
+  ZSACClientID:
+    Type: String
+    NoEcho: true
+    Description: ZPA API Client ID
+    Default: "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+    MinLength: 72
+
+  ZSACClientSecret:
+    Type: String
+    NoEcho: true
+    Description: ZPA API Client Secret
+    Default: "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+    MinLength: 32
+
+  ZSACCompanyID:
+    Type: String
+    NoEcho: true
+    Description: ZPA Company ID
+    Default: "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+    MinLength: 16
+
+  ZSACBase:
+    Type: String
+    NoEcho: true
+    Description: ZPA API Base URL (e.g. config.private.zscaler.com)
+    Default: "config.zpabeta.net"
+    MinLength: 18
+
+  ZWSKey:
+    Type: String
+    NoEcho: true
+    Description: Client Cert Private Key - Base64 Encoded - 'cat client.key | base64'
+    Default: "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+    MinLength: 72
+
+  ZWSCert:
+    Type: String
+    NoEcho: true
+    Description: Client Certificate - Base64 Encoded - 'cat client.crt | base64'
+    Default: "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+    MinLength: 32
+
+  ZWSClientID:
+    Type: String
+    NoEcho: true
+    Description: Client ID for API Key
+    Default: "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+    MinLength: 16
+
+  ZWSClientSecret:
+    Type: String
+    NoEcho: true
+    Description: Client Secret for API Key
+    Default: "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+    MinLength: 10
+
+  ZWSSiteID:
+    Type: String
+    NoEcho: true
+    Description: ZWS Site ID
+    Default: "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+    MinLength: 18
+
+  ZWSURLRoot:
+    Type: String
+    NoEcho: true
+    Description: ZWS URL Root
+    Default: "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+    MinLength: 18
+
+  AdminPort:
+    Description: Port for Admin Access
+    Default: "22"
+    Type: Number
+    MinValue: 1
+    MaxValue: 65535
+  UserPort:
+    Default: "80"
+    Type: Number
+    MinValue: 1
+    MaxValue: 65535
+  KeyName:
+    Description: SSH Keypair to login to the instance
+    Type: AWS::EC2::KeyPair::KeyName
+    Default: "mryan"
+
+  AvailabilityZones:
+    Description: >-
+      List of Availability Zones to use for the subnets in the VPC. Note: The
+      logical order is preserved.
+    Type: 'List<AWS::EC2::AvailabilityZone::Name>'
+  VPCCIDR:
+    AllowedPattern: >-
+      ^(([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])\.){3}([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])(\/(1[6-9]|2[0-8]))$
+    ConstraintDescription: CIDR block parameter must be in the form x.x.x.x/16-28
+    Default: 172.32.0.0/16
+    Description: CIDR block for VPC
+    Type: String  
+  PrivateSubnet1CIDR:
+    AllowedPattern: >-
+      ^(([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])\.){3}([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])(\/(1[6-9]|2[0-8]))$
+    ConstraintDescription: CIDR block parameter must be in the form x.x.x.x/16-28
+    Default: 172.32.128.0/28
+    Description: CIDR block for App Connector 1, Subnet 1 located in Availability Zone 1
+    Type: String
+  PrivateSubnet2CIDR:
+    AllowedPattern: >-
+      ^(([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])\.){3}([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])(\/(1[6-9]|2[0-8]))$
+    ConstraintDescription: CIDR block parameter must be in the form x.x.x.x/16-28
+    Default: 172.32.128.16/28
+    Description: CIDR block for App Connector 2, Subnet 2 located in Availability Zone 2
+    Type: String
+  PublicSubnet1CIDR:
+    AllowedPattern: >-
+      ^(([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])\.){3}([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])(\/(1[6-9]|2[0-8]))$
+    ConstraintDescription: CIDR block parameter must be in the form x.x.x.x/16-28
+    Default: 172.32.128.32/28
+    Description: CIDR block for NAT Gateway1, Subnet 1 located in Availability Zone 1
+    Type: String
+  PublicSubnet2CIDR:
+    AllowedPattern: >-
+      ^(([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])\.){3}([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])(\/(1[6-9]|2[0-8]))$
+    ConstraintDescription: CIDR block parameter must be in the form x.x.x.x/16-28
+    Default: 172.32.128.48/28
+    Description: CIDR block for NAT Gateway2, Subnet 2 located in Availability Zone 1
+    Type: String
+  InstanceType:
+    Description: ZPA Connector EC2 instance type
+    Type: String
+    Default: t2.micro
+    AllowedValues:
+      - t2.micro
+      - c4.xlarge
+      - c5.xlarge
+      - m4.xlarge
+      - m5.xlarge
+    ConstraintDescription: must be a valid EC2 instance type.
+  HostedZoneId:
+    Type: String
+    Description: >-
+      The ID For the Route53 hosted zone.
+    AllowedPattern: '(?!-)[a-zA-Z0-9-.]{1,63}(?<!-)'
+    ConstraintDescription: Must be a valid DNS Zone ID.
+    Default: "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+  HostedZoneName:
+    Type: String
+    Description: >-
+      The ID For the hosted zone.  Use Zone ID rather than domain suffix since
+      private/public DNS may be present.
+    AllowedPattern: '(?!-)[a-zA-Z0-9-.]{1,63}(?<!-)'
+    ConstraintDescription: Must be a valid DNS zone name.
+    Default: "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+
+  ZPAStackName:
+    Description: Name of the CloufFormation stack which created resources
+    Default: 'ZPA'
+    Type: String
+
+  ApplicationSubnet1CIDR:
+    AllowedPattern: >-
+      ^(([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])\.){3}([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])(\/(1[6-9]|2[0-8]))$
+    ConstraintDescription: CIDR block parameter must be in the form x.x.x.x/16-28
+    Default: 172.32.129.0/24
+    Description: CIDR block for Applications in AZ1
+    Type: String
+  ApplicationSubnet2CIDR:
+    AllowedPattern: >-
+      ^(([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])\.){3}([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])(\/(1[6-9]|2[0-8]))$
+    ConstraintDescription: CIDR block parameter must be in the form x.x.x.x/16-28
+    Default: 172.32.130.0/24
+    Description: CIDR block for Applications in AZ2
+    Type: String
+
+  DBName:
+    Default: MyDatabase
+    Description: MySQL database name
+    Type: String
+    MinLength: '1'
+    MaxLength: '64'
+    AllowedPattern: '[a-zA-Z][a-zA-Z0-9]*'
+    ConstraintDescription: must begin with a letter and contain only alphanumeric characters.
+  DBUser:
+    NoEcho: 'true'
+    Description: Username for MySQL database access
+    Type: String
+    Default: 'dbuser'
+    MinLength: '1'
+    MaxLength: '16'
+    AllowedPattern: '[a-zA-Z][a-zA-Z0-9]*'
+    ConstraintDescription: must begin with a letter and contain only alphanumeric characters.
+  DBPassword:
+    NoEcho: 'true'
+    Description: Password for MySQL database access
+    Type: String
+    Default: 'password'
+    MinLength: '8'
+    MaxLength: '41'
+    AllowedPattern: '[a-zA-Z0-9]*'
+    ConstraintDescription: must contain only alphanumeric characters.
+  DBAllocatedStorage:
+    Default: '5'
+    Description: The size of the database (Gb)
+    Type: Number
+    MinValue: '5'
+    MaxValue: '1024'
+    ConstraintDescription: must be between 5 and 1024Gb.
+  DBInstanceClass:
+    Description: The database instance type
+    Type: String
+    Default: db.t2.micro
+    AllowedValues:
+      - db.t2.micro
+      - db.t2.small
+      - db.t2.medium
+      - db.t2.large
+    ConstraintDescription: must select a valid database instance type.
+  MultiAZDatabase:
+    Default: 'true'
+    Description: Create a ulti-AZ MySQL Amazon RDS database instance
+    Type: String
+    AllowedValues:
+      - 'true'
+      - 'false'
+    ConstraintDescription: must be either true or false.
+  WebServerCapacity:
+    Default: '2'
+    Description: The initial number of WebServer instances
+    Type: Number
+    MinValue: '1'
+    MaxValue: '5'
+    ConstraintDescription: must be between 1 and 5 EC2 instances.
+
+  SSHLocation:
+    Description: ' The IP address range that can be used to SSH to the EC2 instances'
+    Type: String
+    MinLength: '9'
+    MaxLength: '18'
+    Default: 0.0.0.0/0
+    AllowedPattern: '(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})/(\d{1,2})'
+    ConstraintDescription: must be a valid IP CIDR range of the form x.x.x.x/x.
+
+Mappings:
+  AWSInstanceType2Arch:
+    t2.micro:
+      Arch: HVM64
+    t2.small:
+      Arch: HVM64
+    t2.medium:
+      Arch: HVM64
+    t2.large:
+      Arch: HVM64
+    c4.xlarge:
+      Arch: HVM64
+    m4.xlarge:
+      Arch: HVM64
+    c5.xlarge:
+      Arch: HVM64
+    m5.xlarge:
+      Arch: HVM64
+  AWSRegionArch2AMI:
+    us-east-1:
+      PV64: NOT_SUPPORTED
+      HVM64: ami-06e4ca020762bfc43
+      HVMG2: NOT_SUPPORTED
+    us-west-2:
+      PV64: NOT_SUPPORTED
+      HVM64: NOT_SUPPORTED
+      HVMG2: NOT_SUPPORTED
+    us-west-1:
+      PV64: NOT_SUPPORTED
+      HVM64: NOT_SUPPORTED
+      HVMG2: NOT_SUPPORTED
+    eu-west-1:
+      PV64: NOT_SUPPORTED
+      HVM64: NOT_SUPPORTED
+      HVMG2: NOT_SUPPORTED
+    eu-west-2:
+      PV64: NOT_SUPPORTED
+      HVM64: NOT_SUPPORTED
+      HVMG2: NOT_SUPPORTED
+    eu-west-3:
+      PV64: NOT_SUPPORTED
+      HVM64: NOT_SUPPORTED
+      HVMG2: NOT_SUPPORTED
+    eu-central-1:
+      PV64: NOT_SUPPORTED
+      HVM64: NOT_SUPPORTED
+      HVMG2: NOT_SUPPORTED
+    ap-northeast-1:
+      PV64: NOT_SUPPORTED
+      HVM64: NOT_SUPPORTED
+      HVMG2: NOT_SUPPORTED
+    ap-northeast-2:
+      PV64: NOT_SUPPORTED
+      HVM64: NOT_SUPPORTED
+      HVMG2: NOT_SUPPORTED
+    ap-northeast-3:
+      PV64: NOT_SUPPORTED
+      HVM64: NOT_SUPPORTED
+      HVMG2: NOT_SUPPORTED
+    ap-southeast-1:
+      PV64: NOT_SUPPORTED
+      HVM64: NOT_SUPPORTED
+      HVMG2: NOT_SUPPORTED
+    ap-southeast-2:
+      PV64: NOT_SUPPORTED
+      HVM64: NOT_SUPPORTED
+      HVMG2: NOT_SUPPORTED
+    ap-south-1:
+      PV64: NOT_SUPPORTED
+      HVM64: NOT_SUPPORTED
+      HVMG2: NOT_SUPPORTED
+    us-east-2:
+      PV64: NOT_SUPPORTED
+      HVM64: ami-0f2bd52972ecf45f8
+      HVMG2: NOT_SUPPORTED
+    ca-central-1:
+      PV64: NOT_SUPPORTED
+      HVM64: NOT_SUPPORTED
+      HVMG2: NOT_SUPPORTED
+    sa-east-1:
+      PV64: NOT_SUPPORTED
+      HVM64: NOT_SUPPORTED
+      HVMG2: NOT_SUPPORTED
+    cn-north-1:
+      PV64: NOT_SUPPORTED
+      HVM64: NOT_SUPPORTED
+      HVMG2: NOT_SUPPORTED
+    cn-northwest-1:
+      PV64: NOT_SUPPORTED
+      HVM64: NOT_SUPPORTED
+      HVMG2: NOT_SUPPORTED
+
+
+Resources:
+  # Create KMS Key and Roles
+  ZSACEncryptionKey:
+    Properties:
+      Description: Encryption key for secret config values for the Parameter Store
+      EnableKeyRotation: false
+      Enabled: true
+      MultiRegion: true
+      KeyPolicy:
+        Id: key-default-1
+        Statement:
+        - Action:
+          - kms:Create*
+          - kms:Encrypt
+          - kms:Describe*
+          - kms:Enable*
+          - kms:List*
+          - kms:Put*
+          - kms:Update*
+          - kms:Revoke*
+          - kms:Disable*
+          - kms:Get*
+          - kms:Delete*
+          - kms:ScheduleKeyDeletion
+          - kms:CancelKeyDeletion
+          Effect: Allow
+          Principal:
+            AWS:
+            - Fn::Sub: arn:aws:iam::${AWS::AccountId}:user/${IAMUsername}
+          Resource: '*'
+          Sid: Allow administration of the key & encryption of new values
+        - Action:
+          - kms:Encrypt
+          - kms:Decrypt
+          - kms:ReEncrypt*
+          - kms:GenerateDataKey*
+          - kms:DescribeKey
+          Effect: Allow
+          Principal:
+            AWS:
+              - Fn::GetAtt: ZSACFunctionRole.Arn
+              - Fn::GetAtt: ZSACInstanceRole.Arn
+          Resource: '*'
+          Sid: Allow use of the key
+        Version: '2012-10-17'
+    Type: AWS::KMS::Key
+  ZSACEncryptionKeyAlias:
+    Properties:
+      AliasName: alias/ZSACKey
+      TargetKeyId:
+        Ref: ZSACEncryptionKey
+    Type: AWS::KMS::Alias
+
+  ZSACFunctionRole:
+    Properties:
+      AssumeRolePolicyDocument:
+        Statement:
+        - Action:
+          - sts:AssumeRole
+          Effect: Allow
+          Principal:
+            Service:
+            - lambda.amazonaws.com
+        Version: '2012-10-17'
+      Policies:
+      - PolicyDocument:
+          Statement:
+          - Action:
+            - ssm:GetParameter*
+            - ssm:PutParameter
+            - ssm:DeleteParameter
+            Effect: Allow
+            Resource:
+              Fn::Sub: arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/ZSAC*
+          Version: '2012-10-17'
+        PolicyName: ZSACParameterAccess
+      - PolicyDocument:
+          Statement:
+          - Action:
+            - ssm:GetParameter*
+            - ssm:PutParameter
+            - ssm:DeleteParameter
+            Effect: Allow
+            Resource:
+              Fn::Sub: arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/ZWS*
+          Version: '2012-10-17'
+        PolicyName: ZWSParameterAccess        
+      - PolicyDocument:
+          Statement:
+          - Action:
+            - logs:CreateLogGroup
+            - logs:CreateLogStream
+            - logs:PutLogEvents
+            Effect: Allow
+            Resource: '*'
+          Version: '2012-10-17'
+        PolicyName: ZSACLambdaBasicExecution
+      - PolicyDocument:
+          Statement:
+          - Action:
+            - xray:PutTraceSegments
+            - xray:PutTelemetryRecords
+            Effect: Allow
+            Resource: '*'
+          Version: '2012-10-17'
+        PolicyName: ZSACXRayAccess
+      - PolicyDocument:
+          Statement:
+          - Action:
+            - kms:Encrypt
+            - kms:Decrypt
+            - kms:ReEncrypt*
+            - kms:GenerateDataKey*
+            - kms:CreateGrant
+            - kms:DescribeKey
+            Effect: Allow
+            Resource: '*'
+          Version: '2012-10-17'
+        PolicyName: ZSACKMSAccess
+    Type: AWS::IAM::Role
+
+  #Create IAM Role for App Connectors
+  ZSACInstanceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Action:
+              - sts:AssumeRole
+            Effect: Allow
+            Principal:
+              Service:
+                - ec2.amazonaws.com  
+      Path: /
+
+
+  VpcId:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: !Ref VPCCIDR
+      InstanceTenancy: 'default'
+      EnableDnsSupport: 'true'
+      EnableDnsHostnames: 'true'
+  InternetGateway:
+    Type: 'AWS::EC2::InternetGateway'
+  VPCGatewayAttachment:
+    Type: 'AWS::EC2::VPCGatewayAttachment'
+    Properties:
+      VpcId: !Ref VpcId
+      InternetGatewayId: !Ref InternetGateway
+
+
+  DHCPOptions:
+    Type: 'AWS::EC2::DHCPOptions'
+    Properties:
+      DomainName: !Ref HostedZoneName
+      DomainNameServers:
+        - AmazonProvidedDNS
+  ZPAConnector1:
+    Type: 'AWS::EC2::Instance'
+    DependsOn: 
+      - NATGateway1
+      - CreateZPAProvisioningKeyConnectorGroupServerGroup
+    Properties:
+      ImageId: !FindInMap 
+        - AWSRegionArch2AMI
+        - !Ref 'AWS::Region'
+        - !FindInMap 
+          - AWSInstanceType2Arch
+          - !Ref InstanceType
+          - Arch
+      InstanceType: !Ref InstanceType
+      NetworkInterfaces:
+        - DeviceIndex: '0'
+          SubnetId: !Ref PrivateSubnet1
+          GroupSet:
+            - !Ref AppConnectorSecurityGroup
+      Tags:
+        - Key: Name
+          Value: ZPAConnector1
+      IamInstanceProfile: !Ref AppConnectorInstanceProfile
+      KeyName: !Ref KeyName
+      UserData: !Base64 
+        'Fn::Join':
+          - ''
+          - - |
+              #!/bin/bash
+            - |
+              /opt/zscaler/bin/provision.sh
+            - |
+              python3 /opt/zscaler/bin/installzws.py
+  ZPAConnector2:
+    Type: 'AWS::EC2::Instance'
+    DependsOn: 
+      - NATGateway1
+      - CreateZPAProvisioningKeyConnectorGroupServerGroup
+    Properties:
+      ImageId: !FindInMap 
+        - AWSRegionArch2AMI
+        - !Ref 'AWS::Region'
+        - !FindInMap 
+          - AWSInstanceType2Arch
+          - !Ref InstanceType
+          - Arch
+      InstanceType: !Ref InstanceType
+      NetworkInterfaces:
+        - DeviceIndex: '0'
+          SubnetId: !Ref PrivateSubnet2
+          GroupSet:
+            - !Ref AppConnectorSecurityGroup
+      Tags:
+        - Key: Name
+          Value: ZPAConnector2
+      IamInstanceProfile: !Ref AppConnectorInstanceProfile
+      KeyName: !Ref KeyName
+      UserData: !Base64 
+        'Fn::Join':
+          - ''
+          - - |
+              #!/bin/bash
+            - |
+              /opt/zscaler/bin/provision.sh
+            - |
+              python3 /opt/zscaler/bin/installzws.py
+
+
+  AppConnectorInstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties: 
+      InstanceProfileName: App-Connector-Instance-Profile
+      Path: /
+      Roles: 
+        - !Ref ZSACInstanceRole
+
+  AppConnectorInstancePolicy:
+    Type: AWS::IAM::Policy
+    Properties:
+      PolicyName: AppConnectorInstancePolicy
+      PolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Action: ec2:CreateTags
+            Resource: arn:aws:ec2:*:*:instance/*
+          - Effect: Allow
+            Action:
+              - kms:ListKeys
+              - kms:ListAliases
+              - kms:DescribeKey
+              - tag:GetResources
+              - ec2:DescribeTags
+            Resource: '*'
+          - Effect: Allow
+            Action: ssm:GetParameter
+            Resource: arn:aws:ssm:*:*:parameter/Z*      
+      Roles:
+          - !Ref ZSACInstanceRole
+
+
+  ZPA1DNS:
+    Type: 'AWS::Route53::RecordSet'
+    Properties:
+      HostedZoneId: !Ref HostedZoneId
+      Comment: DNS name for my instance.
+      Name: !Join 
+        - ''
+        - - !Ref ZPAConnector1
+          - .
+          - !Ref 'AWS::Region'
+          - .
+          - !Ref HostedZoneName
+          - .
+      Type: A
+      TTL: '900'
+      ResourceRecords:
+        - !GetAtt 
+          - ZPAConnector1
+          - PrivateIp
+  ZPA2DNS:
+    Type: 'AWS::Route53::RecordSet'
+    Properties:
+      HostedZoneId: !Ref HostedZoneId
+      Comment: DNS name for my instance.
+      Name: !Join 
+        - ''
+        - - !Ref ZPAConnector2
+          - .
+          - !Ref 'AWS::Region'
+          - .
+          - !Ref HostedZoneName
+          - .
+      Type: A
+      TTL: '900'
+      ResourceRecords:
+        - !GetAtt 
+          - ZPAConnector2
+          - PrivateIp
+
+  PrivateSubnet1:
+    Type: 'AWS::EC2::Subnet'
+    Properties:
+      VpcId: !Ref VpcId
+      CidrBlock: !Ref PrivateSubnet1CIDR
+      AvailabilityZone: !Select 
+        - '0'
+        - !Ref AvailabilityZones
+      Tags:
+        - Key: Name
+          Value: Private subnet 1
+  PrivateSubnet2:
+    Type: 'AWS::EC2::Subnet'
+    Properties:
+      VpcId: !Ref VpcId
+      CidrBlock: !Ref PrivateSubnet2CIDR
+      AvailabilityZone: !Select 
+        - '1'
+        - !Ref AvailabilityZones
+      Tags:
+        - Key: Name
+          Value: Private subnet 2
+
+
+  PrivateSubnet1RouteTableAssociation:
+    Type: 'AWS::EC2::SubnetRouteTableAssociation'
+    Properties:
+      SubnetId: !Ref PrivateSubnet1
+      RouteTableId: !Ref PrivateSubnet1RouteTable
+  PrivateSubnet1NetworkAclAssociation:
+    Type: 'AWS::EC2::SubnetNetworkAclAssociation'
+    Properties:
+      SubnetId: !Ref PrivateSubnet1
+      NetworkAclId: !Ref PrivateSubnet1NetworkAcl
+
+  PrivateSubnet2RouteTableAssociation:
+    Type: 'AWS::EC2::SubnetRouteTableAssociation'
+    Properties:
+      SubnetId: !Ref PrivateSubnet2
+      RouteTableId: !Ref PrivateSubnet2RouteTable
+  PrivateSubnet2NetworkAclAssociation:
+    Type: 'AWS::EC2::SubnetNetworkAclAssociation'
+    Properties:
+      SubnetId: !Ref PrivateSubnet2
+      NetworkAclId: !Ref PrivateSubnet2NetworkAcl
+
+  PublicSubnetRouteTable:
+    Type: 'AWS::EC2::RouteTable'
+    Properties:
+      VpcId: !Ref VpcId
+      Tags:
+        - Key: Name
+          Value: NAT Gateway Public Subnet Route Table
+        - Key: Network
+          Value: Public
+  PublicSubnet1RouteTableAssociation:
+    Type: 'AWS::EC2::SubnetRouteTableAssociation'
+    Properties:
+      SubnetId: !Ref PublicSubnet1
+      RouteTableId: !Ref PublicSubnetRouteTable
+  PublicSubnet2RouteTableAssociation:
+    Type: 'AWS::EC2::SubnetRouteTableAssociation'
+    Properties:
+      SubnetId: !Ref PublicSubnet2
+      RouteTableId: !Ref PublicSubnetRouteTable
+  PublicSubnetRoute:
+    Type: 'AWS::EC2::Route'
+    Properties:
+      RouteTableId: !Ref PublicSubnetRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref InternetGateway
+
+
+  NAT1EIP:
+    Type: 'AWS::EC2::EIP'
+    Properties:
+      Domain: vpc
+
+  NAT2EIP:
+    Type: 'AWS::EC2::EIP'
+    Properties:
+      Domain: vpc
+
+  PublicSubnet1:
+    Type: 'AWS::EC2::Subnet'
+    Properties:
+      VpcId: !Ref VpcId
+      CidrBlock: !Ref PublicSubnet1CIDR
+      AvailabilityZone: !Select 
+        - '0'
+        - !Ref AvailabilityZones
+      Tags:
+        - Key: Name
+          Value: NATGW1 Subnet
+      MapPublicIpOnLaunch: true
+  PublicSubnet2:
+    Type: 'AWS::EC2::Subnet'
+    Properties:
+      VpcId: !Ref VpcId
+      CidrBlock: !Ref PublicSubnet2CIDR
+      AvailabilityZone: !Select 
+        - '1'
+        - !Ref AvailabilityZones
+      Tags:
+        - Key: Name
+          Value: NATGW2 Subnet
+      MapPublicIpOnLaunch: true
+
+
+  NATGateway1:
+    Type: 'AWS::EC2::NatGateway'
+    Properties:
+      AllocationId: !GetAtt 
+        - NAT1EIP
+        - AllocationId
+      SubnetId: !Ref PublicSubnet1
+
+  NATGateway2:
+    Type: 'AWS::EC2::NatGateway'
+    Properties:
+      AllocationId: !GetAtt 
+        - NAT2EIP
+        - AllocationId
+      SubnetId: !Ref PublicSubnet2
+
+
+  PrivateSubnet1NetworkAclEntryInbound:
+    Type: 'AWS::EC2::NetworkAclEntry'
+    Properties:
+      CidrBlock: 0.0.0.0/0
+      Egress: 'false'
+      NetworkAclId: !Ref PrivateSubnet1NetworkAcl
+      Protocol: '-1'
+      RuleAction: allow
+      RuleNumber: '100'
+  PrivateSubnet1NetworkAclEntryOutbound:
+    Type: 'AWS::EC2::NetworkAclEntry'
+    Properties:
+      CidrBlock: 0.0.0.0/0
+      Egress: 'true'
+      NetworkAclId: !Ref PrivateSubnet1NetworkAcl
+      Protocol: '-1'
+      RuleAction: allow
+      RuleNumber: '100'
+  PrivateSubnet1NetworkAcl:
+    Type: 'AWS::EC2::NetworkAcl'
+    Properties:
+      VpcId: !Ref VpcId
+      Tags:
+        - Key: Name
+          Value: NACL Protected App Connector Subnet1
+        - Key: Network
+          Value: NACL Protected
+  PrivateSubnet1RouteTable:
+    Type: 'AWS::EC2::RouteTable'
+    Properties:
+      VpcId: !Ref VpcId
+      Tags:
+        - Key: Name
+          Value: Private App Connector Subnet1
+        - Key: Network
+          Value: Private
+  PrivateSubnet1Route:
+    Type: 'AWS::EC2::Route'
+    Properties:
+      RouteTableId: !Ref PrivateSubnet1RouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId: !Ref NATGateway1
+    DependsOn:
+      - NATGateway1
+
+  PrivateSubnet2NetworkAclEntryInbound:
+    Type: 'AWS::EC2::NetworkAclEntry'
+    Properties:
+      CidrBlock: 0.0.0.0/0
+      Egress: 'false'
+      NetworkAclId: !Ref PrivateSubnet2NetworkAcl
+      Protocol: '-1'
+      RuleAction: allow
+      RuleNumber: '100'
+  PrivateSubnet2NetworkAclEntryOutbound:
+    Type: 'AWS::EC2::NetworkAclEntry'
+    Properties:
+      CidrBlock: 0.0.0.0/0
+      Egress: 'true'
+      NetworkAclId: !Ref PrivateSubnet2NetworkAcl
+      Protocol: '-1'
+      RuleAction: allow
+      RuleNumber: '100'
+  PrivateSubnet2NetworkAcl:
+    Type: 'AWS::EC2::NetworkAcl'
+    Properties:
+      VpcId: !Ref VpcId
+      Tags:
+        - Key: Name
+          Value: NACL Protected App Connector Subnet2
+        - Key: Network
+          Value: NACL Protected
+  PrivateSubnet2RouteTable:
+    Type: 'AWS::EC2::RouteTable'
+    Properties:
+      VpcId: !Ref VpcId
+      Tags:
+        - Key: Name
+          Value: Private App Connector Subnet2
+        - Key: Network
+          Value: Private
+  PrivateSubnet2Route:
+    Type: 'AWS::EC2::Route'
+    Properties:
+      RouteTableId: !Ref PrivateSubnet2RouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId: !Ref NATGateway2
+    DependsOn:
+      - NATGateway2
+
+
+  AppConnectorSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+        GroupDescription: Allow SSH Inbound.  All Outbound.
+        VpcId: !Ref VpcId
+        SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: 172.31.0.0/0
+        SecurityGroupEgress:
+        - IpProtocol: -1
+          FromPort: -1
+          CidrIp: 0.0.0.0/0
+
+
+  LambdaFunctionSSM:
+    Type: AWS::Lambda::Function
+    DependsOn: 
+      - ZSACFunctionRole
+      - ZSACEncryptionKey
+    Properties:
+      Description: Storing secure string in Parameter
+      FunctionName: CreateSecureStringSSMParameterStore
+      Role: !GetAtt ZSACFunctionRole.Arn
+      Timeout: 10
+      Handler: index.lambda_handler
+      Runtime: python3.8
+      Code:
+        ZipFile: |
+          import boto3
+          import json
+          import logging
+          import cfnresponse
+
+          logger = logging.getLogger()
+
+          def lambda_handler(event, context):
+            response = {
+              'StackId': event['StackId'],
+              'RequestId': event['RequestId'],
+              'LogicalResourceId': event['LogicalResourceId'],
+              'Status': 'SUCCESS',
+              'Data': {}
+            }
+            responseData = {}
+            physicalResourceId = {}
+            # Read the values of the parameter we passed in. Comma Delimited List of  
+            # ParameterKeys and ParameterValues and KmsKeyId need to be passed.
+            parameter_keys = event['ResourceProperties']['ParameterKeys']
+            parameter_values = event['ResourceProperties']['ParameterValues']
+            kms_key_id = event['ResourceProperties']['KmsKeyId']
+
+            parameter_key_list = parameter_keys.split(',')
+            parameter_value_list = parameter_values.split(',')
+          
+            logger.debug(parameter_key_list)
+            logger.debug(parameter_value_list)
+
+            length = len(parameter_key_list)
+            i = 0
+            
+            client = boto3.client('ssm')
+            if event['RequestType'] == 'Delete':
+              while i < length:
+                 ssm_response = client.delete_parameter(
+                      Name = parameter_key_list[i]
+                 )
+                 i += 1
+              cfnresponse.send(event, context, cfnresponse.SUCCESS, responseData, physicalResourceId)
+              return
+
+            # For each parameter we passed in, create secure string parameter,
+            while i < length:
+               ssm_response = client.put_parameter(
+                    Name = parameter_key_list[i],
+                    Value=parameter_value_list[i],
+                    Type='SecureString',
+                    KeyId=kms_key_id,
+                    Tier='Standard',
+                    Overwrite=True
+               )
+               i += 1
+            cfnresponse.send(event, context, cfnresponse.SUCCESS, responseData, physicalResourceId)
+            return response
+
+  CreateSecureStringSSM:
+    Type: Custom::CreateSecureStringSSM
+    DependsOn: 
+      - ZSACFunctionRole
+      - ZSACEncryptionKey
+      - LambdaFunctionSSM
+    Properties:
+      ServiceToken: !Sub arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:CreateSecureStringSSMParameterStore
+      ParameterKeys: !Join
+        - ','
+        - - !Sub 'ZSAC-ClientID'
+          - !Sub 'ZSAC-ClientSecret'
+          - !Sub 'ZSAC-CompanyID'
+          - !Sub 'ZSAC-Base'
+      ParameterValues: !Join
+        - ','
+        - - !Ref ZSACClientID
+          - !Ref ZSACClientSecret
+          - !Ref ZSACCompanyID
+          - !Ref ZSACBase
+      ParameteraDescriptions: !Join
+        - ','
+        - - 'ZSAC-ClientID'
+          - 'ZSAC-ClientSecret'
+          - 'ZSAC-CompanyID'
+          - 'ZSAC-Base'
+      KmsKeyId: !Sub arn:aws:kms:${AWS::Region}:${AWS::AccountId}:alias/ZSACKey
+
+  LambdaCreateSegments:
+    Type: AWS::Lambda::Function
+    DependsOn: 
+      - ZSACFunctionRole
+      - ZSACEncryptionKey
+    Properties:
+      Description: Create Application Segments in ZPA, Segment Groups, and policy to allow Access
+      FunctionName: LambdaCreateSegments
+      Role: !GetAtt ZSACFunctionRole.Arn
+      Timeout: 10
+      Handler: index.lambda_handler
+      Runtime: python3.8
+      Code:
+        ZipFile: |
+              import boto3
+              import cfnresponse
+              import logging
+              import urllib3
+              import json
+
+              logger = logging.getLogger()
+
+              def lambda_handler(event, context):
+                # Creating response object
+                response = {
+                  'StackId': event['StackId'],
+                  'RequestId': event['RequestId'],
+                  'LogicalResourceId': event['LogicalResourceId'],
+                  'Status': 'SUCCESS',
+                  'Data': {},
+                  'physicalResourceId': {}
+                }
+                responseData = {}
+                physicalResourceId = {}
+
+                # Read the values of the parameter we passed in. Comma Delimited List of  
+                # ParameterKeys and ParameterValues and KmsKeyId need to be passed.
+                parameter_keys = event['ResourceProperties']['ParameterKeys']
+                parameter_key_list = parameter_keys.split(',')
+                Region=event['ResourceProperties']['Region']
+                applications = event['ResourceProperties']['Applications']
+                application_list = applications.split(',')
+                segment_name = event['ResourceProperties']['SegmentName']
+                adminport = event['ResourceProperties']['Adminport']
+                userport = event['ResourceProperties']['Userport']
+                VPCID=event['ResourceProperties']['VPCID']
+
+                logger.debug(application_list)
+                length = len(parameter_key_list)
+                i = 0
+                
+                client = boto3.client('ssm')
+
+                while i < length:
+                   ssm_response = client.get_parameter(
+                        Name = parameter_key_list[i],
+                        WithDecryption=True
+                   )
+                   if "ZSAC-ClientID" in parameter_key_list[i]:
+                        client_id=ssm_response["Parameter"]["Value"]
+                   if "ZSAC-ClientSecret" in parameter_key_list[i]:
+                        client_secret=ssm_response["Parameter"]["Value"]
+                   if "ZSAC-CompanyID" in parameter_key_list[i]:
+                        company=ssm_response["Parameter"]["Value"]
+                   if "ZSAC-Base" in parameter_key_list[i]:
+                        zscaler_base=ssm_response["Parameter"]["Value"]
+                   i += 1
+
+                #Login to API and retrieve bearer token
+
+                data={'client_id':client_id,'client_secret':client_secret}
+                URL='https://'+zscaler_base+'/signin'
+                http = urllib3.PoolManager()
+                bearer=json.loads(http.request('POST',URL, fields=data).data.decode('utf-8'))["access_token"]
+                HEADERS={'authorization':'Bearer %s' % bearer,'accept': '*/*','Content-Type': 'application/json'}
+
+                #Handle Delete - Retrive Application Segment, Segment Group, and Policy
+                #If Segment Group contains just one segment, delete segement group and policy ; then delete segement
+                #Otherwie just delete segment, and remove segement from segement group.
+                if event['RequestType'] == 'Delete':
+
+                  #Retrieve Policy
+                  Global='https://'+zscaler_base+'/mgmtconfig/v1/admin/customers/'+company+'/policySet/global'
+                  policySet=json.loads(http.request('GET',Global,headers=HEADERS).data.decode('utf-8'))
+                  policySetId=policySet['id']
+                  #Retrieve User Segment Group
+                  SGURL='https://'+zscaler_base+'/mgmtconfig/v1/admin/customers/'+company+'/segmentGroup?page=&pagesize=&search=AWS_User'
+                  SegmentGroupData=json.loads(http.request('GET',SGURL, headers=HEADERS).data.decode('utf-8'))
+                  AWSUserSegmentGroup=SegmentGroupData['list'][0]
+                  AWSUserSegmentGroupId=AWSUserSegmentGroup['id']
+                  NoSegments=len(AWSUserSegmentGroup['applications'])
+                  SGURL='https://'+zscaler_base+'/mgmtconfig/v1/admin/customers/'+company+'/segmentGroup?page=&pagesize=&search=AWS_Admin'
+                  SegmentGroupData=json.loads(http.request('GET',SGURL, headers=HEADERS).data.decode('utf-8'))
+                  AWSAdminSegmentGroup=SegmentGroupData['list'][0]
+                  AWSAdminSegmentGroupId=AWSAdminSegmentGroup['id']
+
+                  #If segmentgroup size=1 then delete Groups and Policy
+                  if NoSegments==1:
+                    i=0
+                    length=len(policySet['rules'])
+                    while i < length:
+                      if policySet['rules'][i]['name'] == "AWS Created":
+                        print(i)
+                        ruleId=policySet['rules'][i]['id']
+                        PolicyURL='https://'+zscaler_base+'/mgmtconfig/v1/admin/customers/'+company+'/policySet/'+policySetId+'/rule/'+ruleId
+                        delete=http.request('DELETE',PolicyURL, headers=HEADERS).data.decode('utf-8')
+                      i += 1
+                    SGDelURL='https://'+zscaler_base+'/mgmtconfig/v1/admin/customers/'+company+'/segmentGroup/'+AWSUserSegmentGroupId
+                    delete=http.request('DELETE',SGDelURL, headers=HEADERS).data.decode('utf-8')
+                    SGDelURL='https://'+zscaler_base+'/mgmtconfig/v1/admin/customers/'+company+'/segmentGroup/'+AWSAdminSegmentGroupId
+                    delete=http.request('DELETE',SGDelURL, headers=HEADERS).data.decode('utf-8')
+
+                  #Delete Application Segments
+                  ASURL='https://'+zscaler_base+'/mgmtconfig/v1/admin/customers/'+company+'/application?page=&pagesize=&search=AWS_User_'+segment_name
+                  AWSUserSegment=json.loads(http.request('GET',ASURL, headers=HEADERS).data.decode('utf-8'))['list'][0]['id']
+                  ASDelURL='https://'+zscaler_base+'/mgmtconfig/v1/admin/customers/'+company+'/application/'+AWSUserSegment
+                  delete=http.request('DELETE',ASDelURL, headers=HEADERS).data.decode('utf-8')
+
+                  ASURL='https://'+zscaler_base+'/mgmtconfig/v1/admin/customers/'+company+'/application?page=&pagesize=&search=AWS_Admin_'+segment_name
+                  AWSAdminSegment=json.loads(http.request('GET',ASURL, headers=HEADERS).data.decode('utf-8'))['list'][0]['id']
+                  ASDelURL='https://'+zscaler_base+'/mgmtconfig/v1/admin/customers/'+company+'/application/'+AWSAdminSegment
+                  delete=http.request('DELETE',ASDelURL, headers=HEADERS).data.decode('utf-8')
+
+                  response['Data']={}
+                  cfnresponse.send(event, context, cfnresponse.SUCCESS, responseData, physicalResourceId)
+                  return
+
+
+                if event['RequestType'] == 'Create':
+                  #Segment Groups - Check if created already, otherwise create
+                  SGURL='https://'+zscaler_base+'/mgmtconfig/v1/admin/customers/'+company+'/segmentGroup?page=&pagesize=&search=AWS_User'
+                  SegmentGroupData=json.loads(http.request('GET',SGURL, headers=HEADERS).data.decode('utf-8'))
+                  if int(SegmentGroupData['totalPages']) > 0:
+                    AWSUserSegmentGroup=SegmentGroupData['list'][0]['id']
+                  else:
+                    postdata={"configSpace": "DEFAULT","description": "AWS User Access Segments","enabled": "true","name": "AWS_User"}
+                    SGPOSTURL='https://'+zscaler_base+'/mgmtconfig/v1/admin/customers/'+company+'/segmentGroup'
+                    AWSUserSegmentGroup=json.loads(http.request('POST',SGPOSTURL, body=json.dumps(postdata).encode('utf-8'), headers=HEADERS).data.decode('utf-8'))['id']
+                
+                  SGURL='https://'+zscaler_base+'/mgmtconfig/v1/admin/customers/'+company+'/segmentGroup?page=&pagesize=&search=AWS_Admin'
+                  SegmentGroupData=json.loads(http.request('GET',SGURL, headers=HEADERS).data.decode('utf-8'))
+                  if int(SegmentGroupData['totalPages']) > 0:
+                    AWSAdminSegmentGroup=SegmentGroupData['list'][0]['id']
+                  else:
+                    postdata={"configSpace": "DEFAULT","description": "AWS User Access Segments","enabled": "true","name": "AWS_Admin"}
+                    SGPOSTURL='https://'+zscaler_base+'/mgmtconfig/v1/admin/customers/'+company+'/segmentGroup'
+                    AWSAdminSegmentGroup=json.loads(http.request('POST',SGPOSTURL, body=json.dumps(postdata).encode('utf-8'), headers=HEADERS).data.decode('utf-8'))['id']
+                
+                  #Retrieve ServerGroup ID
+                  ServerGroupURL='https://'+zscaler_base+'/mgmtconfig/v1/admin/customers/'+company+'/serverGroup?page=&pagesize=&search=AWS-'+Region+'-'+VPCID
+                  ServerGroup=json.loads(http.request('GET',ServerGroupURL, headers=HEADERS).data.decode('utf-8'))['list'][0]['id']
+                  #Create Post data - Create User Application Segment
+                  postdata={
+                    "segmentGroupId": AWSUserSegmentGroup,
+                    "bypassType": "NEVER",
+                    "configSpace": "DEFAULT",
+                    "description": "AWS Cloudformation Created Segment",
+                    "domainNames": applications.split(','),
+                    "doubleEncrypt": "false",
+                    "enabled": "true",
+                    "healthCheckType": "DEFAULT",
+                    "healthReporting": "NONE",
+                    "icmpAccessType": "PING_TRACEROUTING",
+                    "name": "AWS_User_"+segment_name,
+                    "passiveHealthEnabled": "true",
+                    "serverGroups": [
+                      {
+                        "id": ServerGroup
+                      }
+                    ],
+                    "tcpPortRange": [
+                      {
+                        "from": userport,
+                        "to": userport
+                      }
+                    ]
+                    }
+                  
+                  AppSegmentURL='https://'+zscaler_base+'/mgmtconfig/v1/admin/customers/'+company+'/application'
+                  AppSegment=json.loads(http.request('POST',AppSegmentURL,body=json.dumps(postdata).encode('utf-8'), headers=HEADERS).data.decode('utf-8'))['id']
+
+                  #Create Post data - Create Admin Application Segment
+                  postdata={
+                    "segmentGroupId": AWSAdminSegmentGroup,
+                    "bypassType": "NEVER",
+                    "configSpace": "DEFAULT",
+                    "description": "AWS Cloudformation Created Segment",
+                    "domainNames": applications.split(','),
+                    "doubleEncrypt": "false",
+                    "enabled": "true",
+                    "healthCheckType": "DEFAULT",
+                    "healthReporting": "NONE",
+                    "icmpAccessType": "PING_TRACEROUTING",
+                    "name": "AWS_Admin_"+segment_name,
+                    "passiveHealthEnabled": "true",
+                    "serverGroups": [
+                      {
+                        "id": ServerGroup
+                      }
+                    ],
+                    "tcpPortRange": [
+                      {
+                        "from": adminport,
+                        "to": adminport
+                      }
+                    ]
+                    }
+                
+                  AppSegmentURL='https://'+zscaler_base+'/mgmtconfig/v1/admin/customers/'+company+'/application'
+                  AppSegment=json.loads(http.request('POST',AppSegmentURL,body=json.dumps(postdata).encode('utf-8'), headers=HEADERS).data.decode('utf-8'))['id']
+                
+                  #Create Policy if not already created
+                  Global='https://'+zscaler_base+'/mgmtconfig/v1/admin/customers/'+company+'/policySet/global'
+                  policy=json.loads(http.request('GET',Global,headers=HEADERS).data.decode('utf-8'))
+                  policySet=policy['id']
+
+                  created=False
+                  rule=0
+                  while rule < len(policy['rules']):
+                    if policy['rules'][rule]['name']=="AWS Created":
+                      created=True
+                    rule += 1
+
+                  if not created:                  
+                    PolicyURL='https://'+zscaler_base+'/mgmtconfig/v1/admin/customers/'+company+'/policySet/'+policySet+'/rule'
+                    postdata={
+                      "action": "ALLOW",
+                      "bypassDefaultRule": "true",
+                      "conditions": [
+                        {
+                          "negated": "false",
+                          "operands": [
+                            {
+                              "lhs": "id",
+                              "objectType": "APP_GROUP",
+                              "rhs": AWSAdminSegmentGroup
+                            },
+                            {
+                              "lhs": "id",
+                              "objectType": "APP_GROUP",
+                              "rhs": AWSUserSegmentGroup
+                            }
+                          ],
+                          "operator": "OR"
+                        }
+                      ],
+                      "defaultRule": "false",
+                      "description": "AWS Created",
+                      "name": "AWS Created",
+                      "ruleOrder": 0
+                    }
+                    rule=json.loads(http.request('POST',PolicyURL,body=json.dumps(postdata).encode('utf-8'), headers=HEADERS).data.decode('utf-8'))['id']          
+                  response['Data']={}
+                  cfnresponse.send(event, context, cfnresponse.SUCCESS, responseData, physicalResourceId)
+
+
+  CustomLambdaCreateSegments:
+    Type: Custom::LambdaCreateSegments
+    DependsOn: 
+      - LambdaCreateSegments
+    Properties:
+      ServiceToken: !GetAtt LambdaCreateSegments.Arn
+      Region: !Ref "AWS::Region"
+      ParameterKeys: !Join
+        - ','
+        - - !Sub 'ZSAC-ClientID'
+          - !Sub 'ZSAC-ClientSecret'
+          - !Sub 'ZSAC-CompanyID'
+          - !Sub 'ZSAC-Base'
+      Applications: !Join
+        - ','
+        - - !Ref ZPA1DNS
+          - !Ref ZPA2DNS
+      Adminport: !Ref AdminPort
+      Userport: !Ref UserPort
+      VPCID: !Ref VpcId
+      SegmentName: 'Connectors'
+
+
+  LambdaFunctionZPACreate:
+    Type: AWS::Lambda::Function
+    DependsOn: 
+      - ZSACFunctionRole
+      - ZSACEncryptionKey
+    Properties:
+      Description: Read API Variables.  Connect to API.  Create Provisioning Key, Connector Group, Server Group
+      FunctionName: CreateZPAProvisioningKeyConnectorGroupServerGroup
+      Role: !GetAtt ZSACFunctionRole.Arn
+
+      Timeout: 10
+      Handler: index.lambda_handler
+      Runtime: python3.8
+      Code:
+        ZipFile: |
+              import boto3
+              import json
+              import cfnresponse
+              import logging
+              import urllib3
+
+              logger = logging.getLogger()
+
+              def lambda_handler(event, context):
+                # Creating response object
+                response = {
+                  'StackId': event['StackId'],
+                  'RequestId': event['RequestId'],
+                  'LogicalResourceId': event['LogicalResourceId'],
+                  'Status': 'SUCCESS',
+                  'Data': {},
+                  'physicalResourceId': {}
+                }
+                responseData = {}
+                physicalResourceId = {}
+
+                # Read the values of the parameter we passed in. Comma Delimited List of  
+                # ParameterKeys and ParameterValues and KmsKeyId need to be passed.
+                parameter_keys = event['ResourceProperties']['ParameterKeys']
+                parameter_key_list = parameter_keys.split(',')
+                kms_key_id = event['ResourceProperties']['KmsKeyId']
+                Region=event['ResourceProperties']['Region']
+                VPCID=event['ResourceProperties']['VPCID']
+
+                logger.debug(parameter_key_list)
+                length = len(parameter_key_list)
+                i = 0
+                
+                client = boto3.client('ssm')
+
+                while i < length:
+                   ssm_response = client.get_parameter(
+                        Name = parameter_key_list[i],
+                        WithDecryption=True
+                   )
+                   if "ZSAC-ClientID" in parameter_key_list[i]:
+                        client_id=ssm_response["Parameter"]["Value"]
+                   if "ZSAC-ClientSecret" in parameter_key_list[i]:
+                        client_secret=ssm_response["Parameter"]["Value"]
+                   if "ZSAC-CompanyID" in parameter_key_list[i]:
+                        company=ssm_response["Parameter"]["Value"]
+                   if "ZSAC-Base" in parameter_key_list[i]:
+                        zscaler_base=ssm_response["Parameter"]["Value"]
+                   i += 1
+
+
+                #From AWS Region - Calculate Location, Latitude & Longitide
+                
+                aws_regions = {
+                    "us-east-1":{"Location":"Virginia,US", "Latitude":"38.0339", "Longitude":"-78.4860"},
+                    "us-east-2":{"Location":"Ohio,US", "Latitude":"40.4167", "Longitude":"-82.9167"},
+                    "us-west-1":{"Location":"California,US", "Latitude":"37.7749", "Longitude":"-122.4194"},
+                    "us-west-2":{"Location":"Oregon,US", "Latitude":"45.5200", "Longitude":"-122.6819"},
+                    "ca-central-1":{"Location":"Canada,CA", "Latitude":"43.6532", "Longitude":"-79.3832"},
+                    "ap-south-1":{"Location":"Mumbai,IN", "Latitude":"19.0760", "Longitude":"72.8777"},
+                    "ap-northeast-2":{"Location":"Seoul,KR", "Latitude":"37.5665", "Longitude":"126.9780"},
+                    "ap-southeast-1":{"Location":"Singapore,SG", "Latitude":"1.3521", "Longitude":"103.8198"},
+                    "ap-southeast-2":{"Location":"Sydney,AU", "Latitude":"-33.8688", "Longitude":"151.2093"},
+                    "ap-northeast-1":{"Location":"Tokyo,JP", "Latitude":"35.6895", "Longitude":"139.6917"},
+                    "eu-central-1":{"Location":"Frankfurt,DE", "Latitude":"50.1147", "Longitude":"8.6821"},
+                    "eu-west-1":{"Location":"Ireland,IE", "Latitude":"53.4129", "Longitude":"-8.2439"},
+                    "eu-west-2":{"Location":"London,UK", "Latitude":"51.5074", "Longitude":"-0.1278"},
+                    "eu-west-3":{"Location":"Paris,FR", "Latitude":"48.8566", "Longitude":"2.3522"},
+                    "sa-east-1":{"Location":"Sao Paulo,BR", "Latitude":"-23.5505", "Longitude":"-46.6333"}
+                }
+
+                #Login to API and retrieve bearer token
+
+                data={'client_id':client_id,'client_secret':client_secret}
+                URL='https://'+zscaler_base+'/signin'
+                http = urllib3.PoolManager()
+                bearer=json.loads(http.request('POST',URL, fields=data).data.decode('utf-8'))["access_token"]
+                HEADERS={'authorization':'Bearer %s' % bearer,'accept': '*/*','Content-Type': 'application/json'}
+
+                #Setup URLs
+                CGURL='https://'+zscaler_base+'/mgmtconfig/v1/admin/customers/'+company+'/appConnectorGroup'
+                PKURL='https://'+zscaler_base+'/mgmtconfig/v1/admin/customers/'+company+'/associationType/CONNECTOR_GRP/provisioningKey'
+                ECURL='https://'+zscaler_base+'/mgmtconfig/v2/admin/customers/'+company+'/enrollmentCert?page=&pagesize=&search=connector'
+                SGURL='https://'+zscaler_base+'/mgmtconfig/v1/admin/customers/'+company+'/serverGroup'
+                SGSearchURL='https://'+zscaler_base+'/mgmtconfig/v1/admin/customers/'+company+'/serverGroup?page=&pagesize=&search=AWS-'+Region+'-'+VPCID
+                CGSearchURL='https://'+zscaler_base+'/mgmtconfig/v1/admin/customers/'+company+'/appConnectorGroup?page=&pagesize=&search='+Region+'-'+VPCID
+
+                #Handle Delete - Retrive ServerGroup and ConnectorGroup information, Delete each, Return
+                if event['RequestType'] == 'Delete':
+                  ServerGroupData=json.loads(http.request('GET',SGSearchURL, headers=HEADERS).data.decode('utf-8'))['list'][0]
+                  ServerGroupID=ServerGroupData['id']
+                  ConnectorGroupID=ServerGroupData['appConnectorGroups'][0]['id']
+                  SGDelURL='https://'+zscaler_base+'/mgmtconfig/v1/admin/customers/'+company+'/serverGroup/'+ServerGroupID
+                  CGDelURL='https://'+zscaler_base+'/mgmtconfig/v1/admin/customers/'+company+'/appConnectorGroup/'+ConnectorGroupID
+                  SGDel=http.request('DELETE',SGDelURL, headers=HEADERS)
+                  CGDel=http.request('DELETE',CGDelURL, headers=HEADERS)
+                  cfnresponse.send(event, context, cfnresponse.SUCCESS, responseData, physicalResourceId)
+                  return
+
+                #Retrieve Enrollment certificate ID - MUST find one called "connector" - will use first one it finds
+                enrollmentcertId=json.loads(http.request('GET',ECURL, headers=HEADERS).data.decode('utf-8'))['list'][0]['id']
+
+                #Calculate Location information from Region, and Generate POST data for Connector Group
+                ConnectorGroupPostData={
+                  "description": Region+"-"+VPCID,
+                  "dnsQueryType": "IPV4_IPV6",
+                  "enabled": "true",
+                  "latitude": aws_regions[Region]['Latitude'],
+                  "location": aws_regions[Region]['Location'],
+                  "longitude": aws_regions[Region]['Longitude'],
+                  "name": Region+"-"+VPCID,
+                  "overrideVersionProfile": "true",
+                  "lssAppConnectorGroup": "false",
+                  "upgradeDay": "SUNDAY",
+                  "upgradeTimeInSecs": "82800",
+                  "versionProfileId": "0"
+                }
+
+                #Create Connector Group
+                ConnectorGroupID=json.loads(http.request('POST',CGURL, body=json.dumps(ConnectorGroupPostData).encode('utf-8'), headers=HEADERS).data.decode('utf-8'))["id"]
+
+                #Generate Provisioning Key POST data
+                ProvisioningKeyPostData={
+                  "appConnectorGroupId": ConnectorGroupID,
+                  "enabled": "true",
+                  "maxUsage": 1000,
+                  "name": Region+"-"+VPCID,
+                  "enrollmentCertId": enrollmentcertId
+                }
+
+                ProvisioningKey=json.loads(http.request('POST',PKURL, body=json.dumps(ProvisioningKeyPostData).encode('utf-8'), headers=HEADERS).data.decode('utf-8'))
+
+                ServerGroupPostData={
+                  "appConnectorGroups":[{"id": ConnectorGroupID}],
+                  "configSpace": "DEFAULT",
+                  "description": "AWS-"+Region+"-"+VPCID,
+                  "enabled": "true",
+                  "dynamicDiscovery": "true",
+                  "name": "AWS-"+Region+"-"+VPCID
+                }
+                ServerGroup=json.loads(http.request('POST',SGURL, body=json.dumps(ServerGroupPostData).encode('utf-8'), headers=HEADERS).data.decode('utf-8'))
+                response['Data']={}
+                cfnresponse.send(event, context, cfnresponse.SUCCESS, responseData, physicalResourceId)
+
+
+  CreateZPAProvisioningKeyConnectorGroupServerGroup:
+    Type: Custom::CreateGroupsAndPK
+    DependsOn: 
+      - LambdaFunctionZPACreate
+    Properties:
+      ServiceToken: !GetAtt LambdaFunctionZPACreate.Arn
+      Region: !Ref "AWS::Region"
+      ParameterKeys: !Join
+        - ','
+        - - !Sub 'ZSAC-ClientID'
+          - !Sub 'ZSAC-ClientSecret'
+          - !Sub 'ZSAC-CompanyID'
+          - !Sub 'ZSAC-Base'
+      KmsKeyId: !Sub arn:aws:kms:${AWS::Region}:${AWS::AccountId}:alias/ZSACKey
+      VPCID: !Ref VpcId
+
+
+  Route53LambdaRole:
+    Properties:
+      AssumeRolePolicyDocument:
+        Statement:
+        - Action:
+          - sts:AssumeRole
+          Effect: Allow
+          Principal:
+            Service:
+            - lambda.amazonaws.com
+        Version: '2012-10-17'
+      Policies:
+      - PolicyDocument:
+          Statement:
+          - Action:
+            - route53:DisassociateVPCFromHostedZone
+            - route53:AssociateVPCWithHostedZone
+            Effect: Allow
+            Resource:
+            - arn:aws:route53:::hostedzone/*
+            - arn:aws:ec2:*:*:vpc/*
+          Version: '2012-10-17'
+        PolicyName: Route53AssociateDisassociate
+      - PolicyDocument:
+          Statement:
+          - Action:
+            - ec2:DescribeVpcs
+            - route53:ListHostedZones
+            Effect: Allow
+            Resource: '*'
+          Version: '2012-10-17'
+        PolicyName: Route53ListZonesVPCs
+    Type: AWS::IAM::Role
+
+  UpdateR53:
+    Type: AWS::Lambda::Function
+    Properties:
+      Description: Associate new VPC with R53 Private Zone
+      FunctionName: UpdateRoute53
+      Role: !GetAtt Route53LambdaRole.Arn
+      Timeout: 10
+      Handler: index.lambda_handler
+      Runtime: python3.8
+      Code:
+        ZipFile: |
+              import boto3
+              import cfnresponse
+              import logging
+              import urllib3
+
+              logger = logging.getLogger()
+
+              def lambda_handler(event, context):
+                # Creating response object
+                response = {
+                  'StackId': event['StackId'],
+                  'RequestId': event['RequestId'],
+                  'LogicalResourceId': event['LogicalResourceId'],
+                  'Status': 'SUCCESS',
+                  'Data': {},
+                  'physicalResourceId': {}
+                }
+                responseData = {}
+                physicalResourceId = {}
+                
+                VPCID = event['ResourceProperties']['VPCID']
+                VPCREGION = event['ResourceProperties']['Region']
+                HOSTEDZONEID = event['ResourceProperties']['HOSTEDZONEID']
+
+                client = boto3.client('route53')
+
+                #Handle Delete - Disassociate VPC from Route53 Private Zone
+                if event['RequestType'] == 'Delete':
+                  response=client.disassociate_vpc_from_hosted_zone(HostedZoneId=HOSTEDZONEID,VPC={'VPCRegion': VPCREGION,'VPCId': VPCID})
+                  cfnresponse.send(event, context, cfnresponse.SUCCESS, responseData, physicalResourceId)
+                  return
+                #Handle Create - Associate VPC with Route53 Private Zone
+                response = client.associate_vpc_with_hosted_zone(HostedZoneId=HOSTEDZONEID,VPC={'VPCRegion': VPCREGION,'VPCId': VPCID})
+                response['Data']={}
+                cfnresponse.send(event, context, cfnresponse.SUCCESS, responseData, physicalResourceId)
+
+
+  UpdateRoute53:
+    Type: Custom::UpdateRoute53
+    DependsOn: 
+      - UpdateR53
+    Properties:
+      ServiceToken: !GetAtt UpdateR53.Arn
+      Region: !Ref "AWS::Region"
+      HOSTEDZONEID: !Ref HostedZoneId
+      VPCID: !Ref VpcId
+
+  CreateSecureStringZWS:
+    Type: Custom::CreateSecureStringZWS
+    DependsOn: 
+      - ZSACFunctionRole
+      - ZSACEncryptionKey
+    Properties:
+      ServiceToken: !GetAtt LambdaFunctionSSM.Arn
+      Region: !Ref "AWS::Region"
+      ParameterKeys: !Join
+        - ','
+        - - !Sub 'ZWS-Key'
+          - !Sub 'ZWS-Cert'
+          - !Sub 'ZWS-ClientID'
+          - !Sub 'ZWS-ClientSecret'
+          - !Sub 'ZWS-SiteID'
+          - !Sub 'ZWS-URLRoot'
+      ParameterValues: !Join
+        - ','
+        - - !Ref ZWSKey
+          - !Ref ZWSCert
+          - !Ref ZWSClientID
+          - !Ref ZWSClientSecret
+          - !Ref ZWSSiteID
+          - !Ref ZWSURLRoot
+      ParameterDescriptions: !Join
+        - ','
+        - - 'ZWS Client Certificate Private Key'
+          - 'ZWS Client Certificate'
+          - 'ZWS API Client ID'
+          - 'ZWS API Client Secret'
+          - 'ZWS Site ID'
+          - 'ZWS URL Root'
+      KmsKeyId: !Sub arn:aws:kms:${AWS::Region}:${AWS::AccountId}:alias/ZSACKey
+
+
+
+
+  ApplicationSubnet1:
+    Type: 'AWS::EC2::Subnet'
+    Properties:
+      VpcId: !ImportValue
+          'Fn::Sub': "${ZPAStackName}-VPCID"
+      CidrBlock: !Ref ApplicationSubnet1CIDR
+      AvailabilityZone: !ImportValue
+          'Fn::Sub': "${ZPAStackName}-AZ1"
+      Tags:
+        - Key: Name
+          Value: Application Subnet 1
+  ApplicationSubnet2:
+    Type: 'AWS::EC2::Subnet'
+    Properties:
+      VpcId: !ImportValue
+          'Fn::Sub': "${ZPAStackName}-VPCID"
+      CidrBlock: !Ref ApplicationSubnet2CIDR
+      AvailabilityZone: !ImportValue
+          'Fn::Sub': "${ZPAStackName}-AZ2"
+      Tags:
+        - Key: Name
+          Value: Application Subnet 2
+
+
+
+  ApplicationSubnet1NetworkAclAssociation:
+    Type: 'AWS::EC2::SubnetNetworkAclAssociation'
+    Properties:
+      SubnetId: !Ref ApplicationSubnet1
+      NetworkAclId: !Ref ApplicationSubnet1NetworkAcl
+
+
+  ApplicationSubnet2NetworkAclAssociation:
+    Type: 'AWS::EC2::SubnetNetworkAclAssociation'
+    Properties:
+      SubnetId: !Ref ApplicationSubnet2
+      NetworkAclId: !Ref ApplicationSubnet2NetworkAcl
+
+
+  ApplicationSubnet1NetworkAclEntryInbound1:
+    Type: 'AWS::EC2::NetworkAclEntry'
+    Properties:
+      CidrBlock: !ImportValue
+          'Fn::Sub': "${ZPAStackName}-PrivateSubnet1CIDR"
+      Egress: 'false'
+      NetworkAclId: !Ref ApplicationSubnet1NetworkAcl
+      Protocol: '-1'
+      RuleAction: allow
+      RuleNumber: '100'
+  ApplicationSubnet1NetworkAclEntryInbound2:
+    Type: 'AWS::EC2::NetworkAclEntry'
+    Properties:
+      CidrBlock: !ImportValue
+          'Fn::Sub': "${ZPAStackName}-PrivateSubnet2CIDR"
+      Egress: 'false'
+      NetworkAclId: !Ref ApplicationSubnet1NetworkAcl
+      Protocol: '-1'
+      RuleAction: allow
+      RuleNumber: '101'
+  ApplicationSubnet1NetworkAclEntryInbound3:
+    Type: 'AWS::EC2::NetworkAclEntry'
+    Properties:
+      CidrBlock: "0.0.0.0/0"
+      Egress: 'false'
+      NetworkAclId: !Ref ApplicationSubnet1NetworkAcl
+      Protocol: '6'
+      PortRange:
+        From: 32768
+        To: 60999
+      RuleAction: allow
+      RuleNumber: '102'
+  ApplicationSubnet1NetworkAclEntryInbound4:
+    Type: 'AWS::EC2::NetworkAclEntry'
+    Properties:
+      CidrBlock: !Ref ApplicationSubnet2CIDR
+      Egress: 'false'
+      NetworkAclId: !Ref ApplicationSubnet1NetworkAcl
+      Protocol: '6'
+      PortRange:
+        From: 3306
+        To: 3306
+      RuleAction: allow
+      RuleNumber: '103'
+  ApplicationSubnet1NetworkAclEntryInbound5:
+    Type: 'AWS::EC2::NetworkAclEntry'
+    Properties:
+      CidrBlock: !Ref ApplicationSubnet2CIDR
+      Egress: 'false'
+      NetworkAclId: !Ref ApplicationSubnet1NetworkAcl
+      Protocol: '6'
+      PortRange:
+        From: 32768
+        To: 60999
+      RuleAction: allow
+      RuleNumber: '104'
+  ApplicationSubnet1NetworkAclEntryOutbound1:
+    Type: 'AWS::EC2::NetworkAclEntry'
+    Properties:
+      CidrBlock: !ImportValue
+          'Fn::Sub': "${ZPAStackName}-PrivateSubnet1CIDR"
+      Egress: 'true'
+      NetworkAclId: !Ref ApplicationSubnet1NetworkAcl
+      Protocol: '-1'
+      RuleAction: allow
+      RuleNumber: '100'
+  ApplicationSubnet1NetworkAclEntryOutbound2:
+    Type: 'AWS::EC2::NetworkAclEntry'
+    Properties:
+      CidrBlock: !ImportValue
+          'Fn::Sub': "${ZPAStackName}-PrivateSubnet2CIDR"
+      Egress: 'true'
+      NetworkAclId: !Ref ApplicationSubnet1NetworkAcl
+      Protocol: '-1'
+      RuleAction: allow
+      RuleNumber: '101'
+  ApplicationSubnet1NetworkAclEntryOutbound3:
+    Type: 'AWS::EC2::NetworkAclEntry'
+    Properties:
+      CidrBlock: "0.0.0.0/0"
+      Egress: 'true'
+      NetworkAclId: !Ref ApplicationSubnet1NetworkAcl
+      Protocol: '6'
+      PortRange:
+        From: 80
+        To: 80
+      RuleAction: allow
+      RuleNumber: '102'
+  ApplicationSubnet1NetworkAclEntryOutbound4:
+    Type: 'AWS::EC2::NetworkAclEntry'
+    Properties:
+      CidrBlock: "0.0.0.0/0"
+      Egress: 'true'
+      NetworkAclId: !Ref ApplicationSubnet1NetworkAcl
+      Protocol: '6'
+      PortRange:
+        From: 443
+        To: 443
+      RuleAction: allow
+      RuleNumber: '103'
+  ApplicationSubnet1NetworkAclEntryOutbound5:
+    Type: 'AWS::EC2::NetworkAclEntry'
+    Properties:
+      CidrBlock: !Ref ApplicationSubnet2CIDR
+      Egress: 'true'
+      NetworkAclId: !Ref ApplicationSubnet1NetworkAcl
+      Protocol: '6'
+      PortRange:
+        From: 3306
+        To: 3306
+      RuleAction: allow
+      RuleNumber: '104'
+  ApplicationSubnet1NetworkAclEntryOutbound6:
+    Type: 'AWS::EC2::NetworkAclEntry'
+    Properties:
+      CidrBlock: !Ref ApplicationSubnet2CIDR
+      Egress: 'true'
+      NetworkAclId: !Ref ApplicationSubnet1NetworkAcl
+      Protocol: '6'
+      PortRange:
+        From: 32768
+        To: 60999
+      RuleAction: allow
+      RuleNumber: '105'
+  ApplicationSubnet1NetworkAcl:
+    Type: 'AWS::EC2::NetworkAcl'
+    Properties:
+      VpcId: !ImportValue
+          'Fn::Sub': "${ZPAStackName}-VPCID"
+      Tags:
+        - Key: Name
+          Value: NACL Protected Applications
+        - Key: Network
+          Value: NACL Protected
+
+  ApplicationSubnet1RouteTable:
+    Type: 'AWS::EC2::RouteTable'
+    Properties:
+      VpcId: !ImportValue
+          'Fn::Sub': "${ZPAStackName}-VPCID"
+      Tags:
+        - Key: Name
+          Value: Application Subnet1 Route Table
+        - Key: Network
+          Value: Private
+  ApplicationSubnet1Route:
+    Type: 'AWS::EC2::Route'
+    Properties:
+      RouteTableId: !Ref ApplicationSubnet1RouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId: !ImportValue
+          'Fn::Sub': "${ZPAStackName}-NATGateway1"
+
+
+  ApplicationSubnet2NetworkAclEntryInbound1:
+    Type: 'AWS::EC2::NetworkAclEntry'
+    Properties:
+      CidrBlock: !ImportValue
+          'Fn::Sub': "${ZPAStackName}-PrivateSubnet1CIDR"
+      Egress: 'false'
+      NetworkAclId: !Ref ApplicationSubnet2NetworkAcl
+      Protocol: '-1'
+      RuleAction: allow
+      RuleNumber: '100'
+  ApplicationSubnet2NetworkAclEntryInbound2:
+    Type: 'AWS::EC2::NetworkAclEntry'
+    Properties:
+      CidrBlock: !ImportValue
+          'Fn::Sub': "${ZPAStackName}-PrivateSubnet2CIDR"
+      Egress: 'false'
+      NetworkAclId: !Ref ApplicationSubnet2NetworkAcl
+      Protocol: '-1'
+      RuleAction: allow
+      RuleNumber: '101'
+  ApplicationSubnet2NetworkAclEntryInbound3:
+    Type: 'AWS::EC2::NetworkAclEntry'
+    Properties:
+      CidrBlock: "0.0.0.0/0"
+      Egress: 'false'
+      NetworkAclId: !Ref ApplicationSubnet2NetworkAcl
+      Protocol: '6'
+      PortRange:
+        From: 32768
+        To: 60999
+      RuleAction: allow
+      RuleNumber: '102'
+  ApplicationSubnet2NetworkAclEntryInbound4:
+    Type: 'AWS::EC2::NetworkAclEntry'
+    Properties:
+      CidrBlock: !Ref ApplicationSubnet1CIDR
+      Egress: 'false'
+      NetworkAclId: !Ref ApplicationSubnet2NetworkAcl
+      Protocol: '6'
+      PortRange:
+        From: 32768
+        To: 60999
+      RuleAction: allow
+      RuleNumber: '103'
+  ApplicationSubnet2NetworkAclEntryInbound5:
+    Type: 'AWS::EC2::NetworkAclEntry'
+    Properties:
+      CidrBlock: !Ref ApplicationSubnet1CIDR
+      Egress: 'false'
+      NetworkAclId: !Ref ApplicationSubnet2NetworkAcl
+      Protocol: '6'
+      PortRange:
+        From: 3306
+        To: 3306
+      RuleAction: allow
+      RuleNumber: '104'
+  ApplicationSubnet2NetworkAclEntryOutbound1:
+    Type: 'AWS::EC2::NetworkAclEntry'
+    Properties:
+      CidrBlock: !ImportValue
+          'Fn::Sub': "${ZPAStackName}-PrivateSubnet1CIDR"
+      Egress: 'true'
+      NetworkAclId: !Ref ApplicationSubnet2NetworkAcl
+      Protocol: '-1'
+      RuleAction: allow
+      RuleNumber: '100'
+  ApplicationSubnet2NetworkAclEntryOutbound2:
+    Type: 'AWS::EC2::NetworkAclEntry'
+    Properties:
+      CidrBlock: !ImportValue
+          'Fn::Sub': "${ZPAStackName}-PrivateSubnet2CIDR"
+      Egress: 'true'
+      NetworkAclId: !Ref ApplicationSubnet2NetworkAcl
+      Protocol: '-1'
+      RuleAction: allow
+      RuleNumber: '101'
+  ApplicationSubnet2NetworkAclEntryOutbound3:
+    Type: 'AWS::EC2::NetworkAclEntry'
+    Properties:
+      CidrBlock: "0.0.0.0/0"
+      Egress: 'true'
+      NetworkAclId: !Ref ApplicationSubnet2NetworkAcl
+      Protocol: '6'
+      PortRange:
+        From: 80
+        To: 80
+      RuleAction: allow
+      RuleNumber: '102'
+  ApplicationSubnet2NetworkAclEntryOutbound4:
+    Type: 'AWS::EC2::NetworkAclEntry'
+    Properties:
+      CidrBlock: "0.0.0.0/0"
+      Egress: 'true'
+      NetworkAclId: !Ref ApplicationSubnet2NetworkAcl
+      Protocol: '6'
+      PortRange:
+        From: 443
+        To: 443
+      RuleAction: allow
+      RuleNumber: '103'
+  ApplicationSubnet2NetworkAclEntryOutbound5:
+    Type: 'AWS::EC2::NetworkAclEntry'
+    Properties:
+      CidrBlock: !Ref ApplicationSubnet1CIDR
+      Egress: 'true'
+      NetworkAclId: !Ref ApplicationSubnet2NetworkAcl
+      Protocol: '6'
+      PortRange:
+        From: 3306
+        To: 3306
+      RuleAction: allow
+      RuleNumber: '104'
+  ApplicationSubnet2NetworkAclEntryOutbound6:
+    Type: 'AWS::EC2::NetworkAclEntry'
+    Properties:
+      CidrBlock: !Ref ApplicationSubnet1CIDR
+      Egress: 'true'
+      NetworkAclId: !Ref ApplicationSubnet2NetworkAcl
+      Protocol: '6'
+      PortRange:
+        From: 32768
+        To: 60999
+      RuleAction: allow
+      RuleNumber: '105'
+  ApplicationSubnet2NetworkAcl:
+    Type: 'AWS::EC2::NetworkAcl'
+    Properties:
+      VpcId: !ImportValue
+          'Fn::Sub': "${ZPAStackName}-VPCID"
+      Tags:
+        - Key: Name
+          Value: NACL Protected Applications
+        - Key: Network
+          Value: NACL Protected
+
+  ApplicationSubnet2RouteTable:
+    Type: 'AWS::EC2::RouteTable'
+    Properties:
+      VpcId: !ImportValue
+          'Fn::Sub': "${ZPAStackName}-VPCID"
+      Tags:
+        - Key: Name
+          Value: Application Subnet2 Route Table
+        - Key: Network
+          Value: Private
+  ApplicationSubnet2Route:
+    Type: 'AWS::EC2::Route'
+    Properties:
+      RouteTableId: !Ref ApplicationSubnet2RouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId: !ImportValue
+          'Fn::Sub': "${ZPAStackName}-NATGateway2"
+
+  Application1RouteTableAssociation:
+    Type: 'AWS::EC2::SubnetRouteTableAssociation'
+    Properties:
+      SubnetId: !Ref ApplicationSubnet1
+      RouteTableId: !Ref ApplicationSubnet1RouteTable
+
+  Application2RouteTableAssociation:
+    Type: 'AWS::EC2::SubnetRouteTableAssociation'
+    Properties:
+      SubnetId: !Ref ApplicationSubnet2
+      RouteTableId: !Ref ApplicationSubnet2RouteTable
+
+
+  ApplicationLoadBalancer:
+    Type: 'AWS::ElasticLoadBalancingV2::LoadBalancer'
+    Properties:
+      Subnets:
+        - !Ref ApplicationSubnet1
+        - !Ref ApplicationSubnet2
+      Scheme: internal
+      SecurityGroups:
+        - !Ref WebServerSecurityGroup
+
+  ALBListener:
+    Type: 'AWS::ElasticLoadBalancingV2::Listener'
+    Properties:
+      DefaultActions:
+        - Type: forward
+          TargetGroupArn: !Ref ALBTargetGroup
+      LoadBalancerArn: !Ref ApplicationLoadBalancer
+      Port: '80'
+      Protocol: HTTP
+  ALBTargetGroup:
+    Type: 'AWS::ElasticLoadBalancingV2::TargetGroup'
+    Properties:
+      HealthCheckIntervalSeconds: 10
+      HealthCheckTimeoutSeconds: 5
+      HealthyThresholdCount: 2
+      Port: 80
+      Protocol: HTTP
+      UnhealthyThresholdCount: 5
+      VpcId: !ImportValue
+            'Fn::Sub': "${ZPAStackName}-VPCID"
+      TargetGroupAttributes:
+        - Key: stickiness.enabled
+          Value: 'true'
+        - Key: stickiness.type
+          Value: lb_cookie
+        - Key: stickiness.lb_cookie.duration_seconds
+          Value: '30'
+  WebServerGroup:
+    Type: 'AWS::AutoScaling::AutoScalingGroup'
+    Properties:
+      VPCZoneIdentifier: 
+          - !Ref ApplicationSubnet1
+          - !Ref ApplicationSubnet2
+      LaunchConfigurationName: !Ref LaunchConfig
+      MinSize: '1'
+      MaxSize: '5'
+      DesiredCapacity: !Ref WebServerCapacity
+      TargetGroupARNs:
+        - !Ref ALBTargetGroup
+    CreationPolicy:
+      ResourceSignal:
+        Timeout: PT30M
+    UpdatePolicy:
+      AutoScalingRollingUpdate:
+        MinInstancesInService: '1'
+        MaxBatchSize: '1'
+        PauseTime: PT30M
+        WaitOnResourceSignals: 'true'
+  LaunchConfig:
+    Type: 'AWS::AutoScaling::LaunchConfiguration'
+    Metadata:
+      'AWS::CloudFormation::Init':
+        configSets:
+          full_install:
+            - install_cfn
+            - install_ruby_3_0_3
+            - configure_mysql
+            - install_zws
+            - install_application
+        install_cfn:
+          files:
+            /etc/cfn/cfn-hup.conf:
+              content: !Join 
+                - ''
+                - - |
+                    [main]
+                  - stack=
+                  - !Ref 'AWS::StackId'
+                  - |+
+
+                  - region=
+                  - !Ref 'AWS::Region'
+                  - |+
+
+              mode: '000400'
+              owner: root
+              group: root
+            /etc/cfn/hooks.d/cfn-auto-reloader.conf:
+              content: !Join 
+                - ''
+                - - |
+                    [cfn-auto-reloader-hook]
+                  - |
+                    triggers=post.update
+                  - >
+                    path=Resources.LaunchConfig.Metadata.AWS::CloudFormation::Init
+                  - 'action=/opt/aws/bin/cfn-init -v '
+                  - '         --stack '
+                  - !Ref 'AWS::StackName'
+                  - '         --resource LaunchConfig '
+                  - '         --configsets full_install '
+                  - '         --region '
+                  - !Ref 'AWS::Region'
+                  - |+
+
+                  - |
+                    runas=root
+              mode: '000400'
+              owner: root
+              group: root
+          services:
+            sysvinit:
+              cfn-hup:
+                enabled: 'true'
+                ensureRunning: 'true'
+                files:
+                  - /etc/cfn/cfn-hup.conf
+                  - /etc/cfn/hooks.d/cfn-auto-reloader.conf
+        install_ruby_3_0_3:
+          files:
+            /tmp/install_ruby:
+              content: !Join 
+                - |+
+
+                - - '#!/bin/bash'
+                  - 'curl -sSL https://get.rvm.io | bash'
+                  - source /etc/profile.d/rvm.sh
+                  - rvm install 3.0.3
+                  - rvm --default use 3.0.3
+                  - gem install rails
+              mode: '000500'
+              owner: root
+              group: root
+          commands:
+            01_install_ruby:
+              command: /tmp/install_ruby > /var/log/install_ruby.log
+        configure_mysql:
+          packages:
+            yum:
+              mariadb: []
+              mariadb-devel: []
+              mariadb-libs: []
+        install_application:
+          files:
+            /tmp/database.yml:
+              content: !Join 
+                - ''
+                - - |
+                    development:
+                  - |2
+                      adapter: mysql2
+                  - |2
+                      encoding: utf8
+                  - |2
+                      reconnect: false
+                  - |2
+                      pool: 5
+                  - '  database: '
+                  - !Ref DBName
+                  - |+
+
+                  - '  username: '
+                  - !Ref DBUser
+                  - |+
+
+                  - '  password: '
+                  - !Ref DBPassword
+                  - |+
+
+                  - '  host: '
+                  - !GetAtt 
+                    - MySQLDatabase
+                    - Endpoint.Address
+                  - |+
+
+                  - '  port: '
+                  - !GetAtt 
+                    - MySQLDatabase
+                    - Endpoint.Port
+                  - |+
+
+              mode: '000400'
+              owner: root
+              group: root
+            /tmp/conditional_migration.rb:
+              content: !Join 
+                - ''
+                - - |
+                    class CreateNotes < ActiveRecord::Migration[5.1]
+                  - |2
+                      def change
+                  - |2
+                        if ! table_exists?(:notes)
+                  - |2
+                          create_table :notes do |t|
+                  - |2
+                            t.string :title
+                  - |2
+                            t.text :body
+                  - |2
+                            t.timestamps
+                  - |2
+                          end
+                  - |2
+                        end
+                  - |2
+                      end
+                  - |
+                    end
+              mode: '000500'
+              owner: root
+              group: root
+            /tmp/install_application:
+              content: !Join 
+                - ''
+                - - |
+                    #!/bin/bash -e
+                  - |
+                    source /etc/profile.d/rvm.sh
+                  - |
+                    rvm use 3.0.3
+                  - |
+                    export HOME=/home/ec2-user
+                  - |
+                    export PATH=$PATH:/usr/local/bin
+                  - |
+                    cd /home/ec2-user
+                  - |
+                    # Kill the rails server if it is running to allow update
+                  - |
+                    if pgrep ruby &> /dev/null ; then pkill -TERM ruby ; fi
+                  - |
+                    # This sample template creates a new application inline
+                  - |
+                    # Typically you would use files and/or sources to download
+                  - >
+                    # your application package and perform any configuration
+                    here.
+                  - >
+                    # Create a new application, with therubyracer javascript
+                    library
+                  - >
+                    rails new sample -d mysql --skip-spring --skip-bundle
+                    --force
+                  - |
+                    cd /home/ec2-user/sample
+                  - |
+                    sed -i 's/^# \(.*therubyracer.*$\)/\1/' Gemfile
+                  - |
+                    curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.34.0/install.sh | bash
+                  - |
+                    . ~/.nvm/nvm.sh
+                  - |
+                    nvm install node
+                  - |
+                    npm install --global yarn
+                  - |
+                    bundle install
+                  - |
+                    bundle exec rake webpacker:install
+                  - |
+                    # Create a sample scoffold
+                  - |
+                    rails generate scaffold Note title:string body:text --force
+                  - |
+                    # Configure the database connection
+                  - |
+                    mv /tmp/database.yml config
+                  - >
+                    # Since there are multiple instances running, conditionalize
+                    the migration
+                  - >
+                    # so that only 1 host creates the tables. In the real world,
+                    you may check to
+                  - >
+                    # see if the table matches the schema and do a migrate so
+                    that updates work
+                  - |
+                    file=$(find db/migrate/*create_notes* -type f -printf '%f')
+                  - |
+                    mv /tmp/conditional_migration.rb db/migrate/$file
+                  - |
+                    rake db:migrate
+                  - |
+                    cd config/environments
+                  - sed ':a;N;$!ba;s/\nend$/\n  config.hosts \<\< \"rails.
+                  - !Ref 'AWS::Region'
+                  - .
+                  - !ImportValue
+                    'Fn::Sub': "${ZPAStackName}-HostedZoneName"
+                  - \"\nend\n/g' development.rb >> development.rb
+                  - |
+
+              mode: '000500'
+              owner: root
+              group: root
+            /home/ec2-user/start-application:
+              content: !Join 
+                - ''
+                - - |
+                    #!/bin/bash -e
+                  - |
+                    source /etc/profile.d/rvm.sh
+                  - |
+                    rvm use 3.0.3
+                  - |
+                    export HOME=/home/ec2-user
+                  - |
+                    export PATH=$PATH:/usr/local/bin
+                  - |
+                    cd /home/ec2-user/sample
+                  - |
+                    # Startup the application
+                  - |
+                    rails server --binding 0.0.0.0 -p 80 --daemon &
+                  - |
+                    echo started daemon
+              mode: '000500'
+              owner: root
+              group: root
+            /etc/systemd/system/myrailsapp.service:
+              content: !Join 
+                - ''
+                - - |
+                    [Unit]
+                  - |
+                    Description=Rails Server
+                  - |
+                    Requires=network.target
+                  - |
+                    [Service]
+                  - |
+                    Type=simple
+                  - |
+                    User=root
+                  - |
+                    Group=root
+                  - |
+                    WorkingDirectory=/home/ec2-user/sample
+                  - |
+                    ExecStart=/usr/bin/bash -lc 'bundle exec puma -C config/puma.rb --port 80'
+                  - |
+                    TimeoutSec=30
+                  - |
+                    RestartSec=15s
+                  - |
+                    Restart=always
+                  - |
+                    [Install]
+                  - |
+                    WantedBy=multi-user.target
+              mode: '000500'
+              owner: root
+              group: root
+          commands:
+            01_install_application:
+              command: /tmp/install_application > /var/log/install_application.log
+            02_configure_reboot:
+              command: echo /home/ec2-user/start-application >> /etc/rc.local
+            03_enable_service:
+              command: systemctl enable myrailsapp.service
+            04_start_service:
+              command: systemctl start myrailsapp.service
+            05_cleanup:
+              command: rm /tmp/install_application
+        install_zws:
+          files:
+            /opt/zscaler/bin/installzws.py:
+              content: !Join 
+                - ''
+                - - |
+                    #!/usr/bin/python3
+                  - |2
+                    #
+                  - |2
+                    # Copyright 2021 Zscaler - Mark Ryan
+                  - |2
+                    # SPDX-License-Identifier: Apache-2.0
+                  - |2
+                    #
+                  - |2
+                    import requests, os, subprocess, boto3, tempfile, base64
+                  - |2
+                    from edgeutils import ApiSession
+                  - |2
+                    #Get AWS Environment
+                  - |2
+                    region=requests.get("http://169.254.169.254/latest/meta-data/placement/region").text
+                  - |2
+                    session = boto3.session.Session()
+                  - |2
+                    ssm=session.client('ssm',region_name=region)
+                  - |2
+                    #Retrieve ZWS Parameters from SSM
+                  - |2
+                    Key=ssm.get_parameter(Name='ZWS-Key',WithDecryption=True)['Parameter']['Value']
+                  - |2
+                    Cert=ssm.get_parameter(Name='ZWS-Cert',WithDecryption=True)['Parameter']['Value']
+                  - |2
+                    ClientID=ssm.get_parameter(Name='ZWS-ClientID',WithDecryption=True)['Parameter']['Value']
+                  - |2
+                    ClientSecret=ssm.get_parameter(Name='ZWS-ClientSecret',WithDecryption=True)['Parameter']['Value']
+                  - |2
+                    SiteID=ssm.get_parameter(Name='ZWS-SiteID',WithDecryption=True)['Parameter']['Value']
+                  - |2
+                    URLRoot=ssm.get_parameter(Name='ZWS-URLRoot',WithDecryption=True)['Parameter']['Value']
+                  - |2
+                    #Write certificate to disk temporarily - required for requests.get to function
+                  - |2
+                    cdisk = tempfile.NamedTemporaryFile(delete=False)
+                  - |2
+                    cdisk.write(base64.b64decode(Cert))
+                  - |2
+                    cdisk.close()
+                  - |2
+                    kdisk = tempfile.NamedTemporaryFile(delete=False)
+                  - |2
+                    kdisk.write(base64.b64decode(Key))
+                  - |2
+                    kdisk.close()
+                  - |2
+                    config={'url_root':"HTTPS://"+URLRoot, 'site_id': SiteID, 'username': ClientID, 'password': ClientSecret, 'cert_file': cdisk.name, 'key_file': kdisk.name}
+                  - |2
+                    #Create API Session
+                  - |2
+                    api = ApiSession(config)
+                  - |2
+                    #Query ZWS API for Installers - Download RHEL Latest Version
+                  - |2
+                    installers = api.get('installers')
+                  - |2
+                    for installer in installers:
+                  - |2
+                        if installer['distroName']=='RHEL':
+                  - |2
+                            params="x-auth-token="+requests.utils.quote(installer['authToken'])
+                  - |2
+                            uri=installer['uri']
+                  - |2
+                            fileName=installer['fileName']
+                  - |2
+                            download=requests.get(uri,params=params)
+                  - |2
+                            if download.status_code == 200:
+                  - |2
+                                with open("/tmp/"+fileName, 'wb') as out_file:
+                  - |2
+                                    out_file.write(download.content)
+                  - |2
+                            break
+                  - |2
+                    os.unlink(cdisk.name)
+                  - |2
+                    os.unlink(kdisk.name)
+                  - |2
+                    #install RPM and set SiteID
+                  - |2
+                    process=subprocess.run(['yum','-y','--nogpgcheck','install','/tmp/'+fileName])
+                  - |2
+                    process=subprocess.run(['/opt/edgewise/bin/edgewise_setup','--set-site-id',SiteID])
+              mode: '000400'
+              owner: root
+              group: root
+          commands:
+            01_download_edgeutils:
+              command: curl https://raw.githubusercontent.com/EdgewiseNetworks/api-examples/master/v1/python/edgeutils.py -o /opt/zscaler/bin/edgeutils.py
+            02_permissions_edgeutils:
+              command: chmod 700 /opt/zscaler/bin/edgeutils.py
+            03_pip_dependencies:
+              command: pip3 install boto3 requests
+            04_run_install:
+              command: python3 /opt/zscaler/bin/installzws.py
+    Properties:
+      ImageId: !FindInMap 
+        - AWSRegionArch2AMI
+        - !Ref 'AWS::Region'
+        - !FindInMap 
+          - AWSInstanceType2Arch
+          - !Ref InstanceType
+          - Arch
+      InstanceType: !Ref InstanceType
+      SecurityGroups:
+        - !Ref WebServerSecurityGroup
+      KeyName: !Ref KeyName
+      IamInstanceProfile: !Ref ApplicationInstanceProfile
+      UserData: !Base64 
+        'Fn::Join':
+          - ''
+          - - |
+              #!/bin/bash -xe
+            - |
+              yum update -y aws-cfn-bootstrap
+
+            - '/opt/aws/bin/cfn-init -v '
+            - '         --stack '
+            - !Ref 'AWS::StackId'
+            - '         --resource LaunchConfig '
+            - '         --configsets full_install '
+            - '         --region '
+            - !Ref 'AWS::Region'
+            - |+
+
+            - '/opt/aws/bin/cfn-signal -e 0 '
+            - '         --stack '
+            - !Ref 'AWS::StackId'
+            - '         --resource WebServerGroup '
+            - '         --region '
+            - !Ref 'AWS::Region'
+            - |+
+
+  ApplicationInstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties: 
+      InstanceProfileName: Application-Instance-Profile
+      Path: /
+      Roles: 
+        - !ImportValue
+          'Fn::Sub': "${ZPAStackName}-InstanceRole"
+
+  ApplicationInstancePolicy:
+    Type: AWS::IAM::Policy
+    Properties:
+      PolicyName: ApplicationInstancePolicy
+      PolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Action: ec2:CreateTags
+            Resource: arn:aws:ec2:*:*:instance/*
+          - Effect: Allow
+            Action:
+              - kms:ListKeys
+              - kms:ListAliases
+              - kms:DescribeKey
+              - tag:GetResources
+              - ec2:DescribeTags
+            Resource: '*'
+          - Effect: Allow
+            Action: ssm:GetParameter
+            Resource: arn:aws:ssm:*:*:parameter/Z*      
+      Roles:
+          - !ImportValue
+            'Fn::Sub': "${ZPAStackName}-InstanceRole"
+
+  WebServerSecurityGroup:
+    Type: 'AWS::EC2::SecurityGroup'
+    Properties:
+      GroupDescription: Enable HTTP access locked down to the load balancer + SSH access
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: '80'
+          ToPort: '80'
+          CidrIp: !Ref ApplicationSubnet1CIDR
+        - IpProtocol: tcp
+          FromPort: '80'
+          ToPort: '80'
+          CidrIp: !Ref ApplicationSubnet2CIDR
+        - IpProtocol: tcp
+          FromPort: '22'
+          ToPort: '22'
+          SourceSecurityGroupId: !ImportValue
+            'Fn::Sub': "${ZPAStackName}-AppConnectorSecurityGroup"
+        - IpProtocol: tcp
+          FromPort: '22'
+          ToPort: '22'
+          SourceSecurityGroupId: !ImportValue
+            'Fn::Sub': "${ZPAStackName}-AppConnectorSecurityGroup"
+        - IpProtocol: tcp
+          FromPort: '80'
+          ToPort: '80'
+          SourceSecurityGroupId: !ImportValue
+            'Fn::Sub': "${ZPAStackName}-AppConnectorSecurityGroup"
+      VpcId: !ImportValue
+            'Fn::Sub': "${ZPAStackName}-VPCID"
+  DBEC2SecurityGroup:
+    Type: 'AWS::EC2::SecurityGroup'
+    Properties:
+      GroupDescription: Open database for access
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: '3306'
+          ToPort: '3306'
+          SourceSecurityGroupId: !Ref WebServerSecurityGroup
+      VpcId: !ImportValue
+            'Fn::Sub': "${ZPAStackName}-VPCID"
+  DBSubnetGroup:
+      Type: "AWS::RDS::DBSubnetGroup"
+      Properties:
+        DBSubnetGroupDescription: "RDS DB Subnet Group"
+        SubnetIds:
+          - !Ref ApplicationSubnet1
+          - !Ref ApplicationSubnet2
+  MySQLDatabase:
+    Type: 'AWS::RDS::DBInstance'
+    Properties:
+      Engine: MySQL
+      DBName: !Ref DBName
+      MultiAZ: !Ref MultiAZDatabase
+      MasterUsername: !Ref DBUser
+      MasterUserPassword: !Ref DBPassword
+      DBInstanceClass: !Ref DBInstanceClass
+      AllocatedStorage: !Ref DBAllocatedStorage
+      VPCSecurityGroups:
+        - !GetAtt 
+          - DBEC2SecurityGroup
+          - GroupId
+      DBSubnetGroupName:
+        Ref: DBSubnetGroup
+
+  ApplicationRecord:
+    Type: 'AWS::Route53::RecordSet'
+    Properties:
+      HostedZoneId: !ImportValue
+            'Fn::Sub': "${ZPAStackName}-HostedZoneId"
+      Comment: DNS name for my instance.
+      Name: !Join 
+        - ''
+        - - 'rails'
+          - .
+          - !Ref 'AWS::Region'
+          - .
+          - !ImportValue
+            'Fn::Sub': "${ZPAStackName}-HostedZoneName"
+          - .
+      Type: CNAME
+      TTL: '900'
+      ResourceRecords:
+        - !GetAtt 
+          - ApplicationLoadBalancer
+          - DNSName
+
+  CustomLambdaCreateSegments:
+    Type: Custom::LambdaCreateSegments
+    DependsOn:
+        - WebServerSecurityGroup
+    Properties:
+      ServiceToken: !ImportValue
+            'Fn::Sub': "${ZPAStackName}-LambdaCreateSegments"
+      Region: !Ref "AWS::Region"
+      ParameterKeys: !Join
+        - ','
+        - - !Sub 'ZSAC-ClientID'
+          - !Sub 'ZSAC-ClientSecret'
+          - !Sub 'ZSAC-CompanyID'
+          - !Sub 'ZSAC-Base'
+      Applications: !Join 
+            - ''
+            - - 'rails'
+              - .
+              - !Ref 'AWS::Region'
+              - .
+              - !ImportValue
+                'Fn::Sub': "${ZPAStackName}-HostedZoneName"
+      Adminport: "22"
+      Userport: "80"
+      VPCID: !ImportValue
+          'Fn::Sub': "${ZPAStackName}-VPCID"
+      SegmentName: 'Rails'
+    

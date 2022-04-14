@@ -1,0 +1,92 @@
+
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'Import CreateSecureString Lambda function.  Input ZWS API Parametes.  Call Lambda function to store ZWS API in SSM Parameter Store'
+
+Parameters:
+  CreationStackName:
+    Description: Name of the CloufFormation stack which created resources
+    Default: "ZPA-Create-SSM"
+    Type: String
+
+  ZWSKey:
+    Type: String
+    NoEcho: true
+    Description: Client Cert Private Key - Base64 Encoded - 'cat client.key | base64'
+    Default: ""
+    MinLength: 72
+
+  ZWSCert:
+    Type: String
+    NoEcho: true
+    Description: Client Certificate - Base64 Encoded - 'cat client.crt | base64'
+    Default: ""
+    MinLength: 32
+
+  ZWSClientID:
+    Type: String
+    NoEcho: true
+    Description: Client ID for API Key
+    Default: ""
+    MinLength: 16
+
+  ZWSClientSecret:
+    Type: String
+    NoEcho: true
+    Description: Client Secret for API Key
+    Default: ""
+    MinLength: 10
+
+  ZWSSiteID:
+    Type: String
+    NoEcho: true
+    Description: ZWS Site ID
+    Default: ""
+    MinLength: 18
+
+  ZWSURLRoot:
+    Type: String
+    NoEcho: true
+    Description: ZWS URL Root
+    Default: ""
+    MinLength: 18
+
+
+Resources:
+  CreateSecureStringZWS:
+    Type: Custom::CreateSecureStringZWS
+    Properties:
+      ServiceToken: !ImportValue
+        'Fn::Sub': "${CreationStackName}-LambdaFunctionArn"
+      Region: !Ref "AWS::Region"
+      ParameterKeys: !Join
+        - ','
+        - - !Sub 'ZWS-Key'
+          - !Sub 'ZWS-Cert'
+          - !Sub 'ZWS-ClientID'
+          - !Sub 'ZWS-ClientSecret'
+          - !Sub 'ZWS-SiteID'
+          - !Sub 'ZWS-URLRoot'
+      ParameterValues: !Join
+        - ','
+        - - !Ref ZWSKey
+          - !Ref ZWSCert
+          - !Ref ZWSClientID
+          - !Ref ZWSClientSecret
+          - !Ref ZWSSiteID
+          - !Ref ZWSURLRoot
+      ParameterDescriptions: !Join
+        - ','
+        - - 'ZWS Client Certificate Private Key'
+          - 'ZWS Client Certificate'
+          - 'ZWS API Client ID'
+          - 'ZWS API Client Secret'
+          - 'ZWS Site ID'
+          - 'ZWS URL Root'
+      KmsKeyId: !Sub arn:aws:kms:${AWS::Region}:${AWS::AccountId}:alias/ZSACKey
+
+Outputs:
+  StackName:
+    Description: 'Stack name.'
+    Value: !Sub '${AWS::StackName}'
+    Export:
+      Name: !Sub '${AWS::StackName}-stack-name'

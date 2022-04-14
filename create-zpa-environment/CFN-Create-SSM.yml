@@ -1,0 +1,300 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: >-
+  This template creates a Lambda function to write Secure Strings to Parameter Store, since they cannot be written directly.
+  It creates KMS key for encrypting Parameters, and creates roles for Lambda functions and EC2 instances to read/write keys
+  Input ZPA API Keys and store securely in Parameter Store.  Outputs functions and roles to be used by subsequent stacks.
+
+Parameters:
+  IAMUsername:
+    Description: Name of the IAM user who will be the administrator of the KMS key
+      we create. This user will be able to encrypt values and manage the key.
+    Default: "mryan"
+    Type: String
+
+  ZSACClientID:
+    Type: String
+    NoEcho: true
+    Description: ZPA API Client ID
+    Default: ""
+    MinLength: 72
+
+  ZSACClientSecret:
+    Type: String
+    NoEcho: true
+    Description: ZPA API Client Secret
+    Default: ""
+    MinLength: 32
+
+  ZSACCompanyID:
+    Type: String
+    NoEcho: true
+    Description: ZPA Company ID
+    Default: ""
+    MinLength: 16
+
+  ZSACBase:
+    Type: String
+    NoEcho: true
+    Description: ZPA API Base URL (e.g. config.private.zscaler.com)
+    Default: ""
+    MinLength: 18
+
+Resources:
+  # Create KMS Key and Roles
+  ZSACEncryptionKey:
+    Properties:
+      Description: Encryption key for secret config values for the Parameter Store
+      EnableKeyRotation: false
+      Enabled: true
+      MultiRegion: true
+      KeyPolicy:
+        Id: key-default-1
+        Statement:
+        - Action:
+          - kms:Create*
+          - kms:Encrypt
+          - kms:Describe*
+          - kms:Enable*
+          - kms:List*
+          - kms:Put*
+          - kms:Update*
+          - kms:Revoke*
+          - kms:Disable*
+          - kms:Get*
+          - kms:Delete*
+          - kms:ScheduleKeyDeletion
+          - kms:CancelKeyDeletion
+          Effect: Allow
+          Principal:
+            AWS:
+            - Fn::Sub: arn:aws:iam::${AWS::AccountId}:user/${IAMUsername}
+          Resource: '*'
+          Sid: Allow administration of the key & encryption of new values
+        - Action:
+          - kms:Encrypt
+          - kms:Decrypt
+          - kms:ReEncrypt*
+          - kms:GenerateDataKey*
+          - kms:DescribeKey
+          Effect: Allow
+          Principal:
+            AWS:
+              - Fn::GetAtt: ZSACFunctionRole.Arn
+              - Fn::GetAtt: ZSACInstanceRole.Arn
+          Resource: '*'
+          Sid: Allow use of the key
+        Version: '2012-10-17'
+    Type: AWS::KMS::Key
+  ZSACEncryptionKeyAlias:
+    Properties:
+      AliasName: alias/ZSACKey
+      TargetKeyId:
+        Ref: ZSACEncryptionKey
+    Type: AWS::KMS::Alias
+
+  ZSACFunctionRole:
+    Properties:
+      AssumeRolePolicyDocument:
+        Statement:
+        - Action:
+          - sts:AssumeRole
+          Effect: Allow
+          Principal:
+            Service:
+            - lambda.amazonaws.com
+        Version: '2012-10-17'
+      Policies:
+      - PolicyDocument:
+          Statement:
+          - Action:
+            - ssm:GetParameter*
+            - ssm:PutParameter
+            - ssm:DeleteParameter
+            Effect: Allow
+            Resource:
+              Fn::Sub: arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/ZSAC*
+          Version: '2012-10-17'
+        PolicyName: ZSACParameterAccess
+      - PolicyDocument:
+          Statement:
+          - Action:
+            - ssm:GetParameter*
+            - ssm:PutParameter
+            - ssm:DeleteParameter
+            Effect: Allow
+            Resource:
+              Fn::Sub: arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/ZWS*
+          Version: '2012-10-17'
+        PolicyName: ZWSParameterAccess        
+      - PolicyDocument:
+          Statement:
+          - Action:
+            - logs:CreateLogGroup
+            - logs:CreateLogStream
+            - logs:PutLogEvents
+            Effect: Allow
+            Resource: '*'
+          Version: '2012-10-17'
+        PolicyName: ZSACLambdaBasicExecution
+      - PolicyDocument:
+          Statement:
+          - Action:
+            - xray:PutTraceSegments
+            - xray:PutTelemetryRecords
+            Effect: Allow
+            Resource: '*'
+          Version: '2012-10-17'
+        PolicyName: ZSACXRayAccess
+      - PolicyDocument:
+          Statement:
+          - Action:
+            - kms:Encrypt
+            - kms:Decrypt
+            - kms:ReEncrypt*
+            - kms:GenerateDataKey*
+            - kms:CreateGrant
+            - kms:DescribeKey
+            Effect: Allow
+            Resource: '*'
+          Version: '2012-10-17'
+        PolicyName: ZSACKMSAccess
+    Type: AWS::IAM::Role
+
+  #Create IAM Role for App Connectors
+  ZSACInstanceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Action:
+              - sts:AssumeRole
+            Effect: Allow
+            Principal:
+              Service:
+                - ec2.amazonaws.com  
+      Path: /
+
+
+  LambdaFunction:
+    Type: AWS::Lambda::Function
+    DependsOn: 
+      - ZSACFunctionRole
+      - ZSACEncryptionKey
+    Properties:
+      Description: Storing secure string in Parameter
+      FunctionName: CreateSecureStringSSMParameterStore
+      Role: !GetAtt ZSACFunctionRole.Arn
+      Timeout: 10
+      Handler: index.lambda_handler
+      Runtime: python3.8
+      Code:
+        ZipFile: |
+          import boto3
+          import json
+          import logging
+          import cfnresponse
+
+          logger = logging.getLogger()
+
+          def lambda_handler(event, context):
+            response = {
+              'StackId': event['StackId'],
+              'RequestId': event['RequestId'],
+              'LogicalResourceId': event['LogicalResourceId'],
+              'Status': 'SUCCESS',
+              'Data': {}
+            }
+            responseData = {}
+            physicalResourceId = {}
+            # Read the values of the parameter we passed in. Comma Delimited List of  
+            # ParameterKeys and ParameterValues and KmsKeyId need to be passed.
+            parameter_keys = event['ResourceProperties']['ParameterKeys']
+            parameter_values = event['ResourceProperties']['ParameterValues']
+            kms_key_id = event['ResourceProperties']['KmsKeyId']
+
+            parameter_key_list = parameter_keys.split(',')
+            parameter_value_list = parameter_values.split(',')
+          
+            logger.debug(parameter_key_list)
+            logger.debug(parameter_value_list)
+
+            length = len(parameter_key_list)
+            i = 0
+            
+            client = boto3.client('ssm')
+            if event['RequestType'] == 'Delete':
+              while i < length:
+                 ssm_response = client.delete_parameter(
+                      Name = parameter_key_list[i]
+                 )
+                 i += 1
+              cfnresponse.send(event, context, cfnresponse.SUCCESS, responseData, physicalResourceId)
+              return
+
+            # For each parameter we passed in, create secure string parameter,
+            while i < length:
+               ssm_response = client.put_parameter(
+                    Name = parameter_key_list[i],
+                    Value=parameter_value_list[i],
+                    Type='SecureString',
+                    KeyId=kms_key_id,
+                    Tier='Standard',
+                    Overwrite=True
+               )
+               i += 1
+            cfnresponse.send(event, context, cfnresponse.SUCCESS, responseData, physicalResourceId)
+            return response
+
+  CreateSecureStringSSM:
+    Type: Custom::CreateSecureStringSSM
+    DependsOn: 
+      - ZSACFunctionRole
+      - ZSACEncryptionKey
+      - LambdaFunction
+    Properties:
+      ServiceToken: !Sub arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:CreateSecureStringSSMParameterStore
+      ParameterKeys: !Join
+        - ','
+        - - !Sub 'ZSAC-ClientID'
+          - !Sub 'ZSAC-ClientSecret'
+          - !Sub 'ZSAC-CompanyID'
+          - !Sub 'ZSAC-Base'
+      ParameterValues: !Join
+        - ','
+        - - !Ref ZSACClientID
+          - !Ref ZSACClientSecret
+          - !Ref ZSACCompanyID
+          - !Ref ZSACBase
+      ParameteraDescriptions: !Join
+        - ','
+        - - 'ZSAC-ClientID'
+          - 'ZSAC-ClientSecret'
+          - 'ZSAC-CompanyID'
+          - 'ZSAC-Base'
+      KmsKeyId: !Sub arn:aws:kms:${AWS::Region}:${AWS::AccountId}:alias/ZSACKey
+
+Outputs:
+  StackName:
+    Description: 'Stack name.'
+    Value: !Sub '${AWS::StackName}'
+    Export:
+      Name: !Sub '${AWS::StackName}-stack-name'
+
+  LambdaFunctionArn:
+    Description: 'Lambda Function Arn'
+    Value: !GetAtt LambdaFunction.Arn
+    Export:
+      Name: !Sub '${AWS::StackName}-LambdaFunctionArn'
+
+  LambdaRoleArn:
+    Description: 'Lambda Role Arn'
+    Value: !GetAtt ZSACFunctionRole.Arn
+    Export:
+      Name: !Sub '${AWS::StackName}-ZSACFunctionRole'
+
+  ZSACInstanceRole:
+    Description: 'ZSACInstanceRole'
+    Value: !Ref  ZSACInstanceRole
+    Export:
+      Name: !Sub '${AWS::StackName}-ZSACInstanceRole'

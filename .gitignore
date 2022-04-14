@@ -1,0 +1,8 @@
+*.json
+*.csv
+*.yaml
+*.key
+*.pem
+*.pcap
+*.pcapng
+*.pfx

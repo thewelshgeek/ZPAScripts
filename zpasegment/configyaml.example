@@ -1,0 +1,6 @@
+BindUsername: 'ldap@domain'
+BindPassword: 'password'
+ZPAclientId: 'clientid'
+ZPAclientSecret: 'clientsecret'
+ZPACompanyID: '123456'
+ZPAEndpoint: 'https://config.private.zscaler.com'

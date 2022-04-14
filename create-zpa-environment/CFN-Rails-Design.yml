@@ -1,0 +1,1749 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: >-
+  BASED ON AWS CloudFormation Sample Template Rails_Multi_AZ: Create a highly
+  available, scalable Ruby on Rails stack with a multi-AZ MySQL Amazon RDS
+  database instance for the backend data store. This template demonstrates using
+  the AWS CloudFormation bootstrap scripts to install the packages and files
+  necessary to deploy a Rails application. **WARNING** This template creates one
+  or more Amazon EC2 instances, an Application  Load Balancer and an Amazon RDS
+  DB instance. You will be billed for the AWS resources used if you create a
+  stack from this template.
+Parameters:
+  ZPAStackName:
+    Description: Name of the CloufFormation stack which created resources
+    Default: ZPA
+    Type: String
+  ApplicationSubnet1CIDR:
+    AllowedPattern: >-
+      ^(([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])\.){3}([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])(\/(1[6-9]|2[0-8]))$
+    ConstraintDescription: CIDR block parameter must be in the form x.x.x.x/16-28
+    Default: 172.32.129.0/24
+    Description: CIDR block for Applications in AZ1
+    Type: String
+  ApplicationSubnet2CIDR:
+    AllowedPattern: >-
+      ^(([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])\.){3}([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])(\/(1[6-9]|2[0-8]))$
+    ConstraintDescription: CIDR block parameter must be in the form x.x.x.x/16-28
+    Default: 172.32.130.0/24
+    Description: CIDR block for Applications in AZ2
+    Type: String
+  KeyName:
+    Description: Name of an existing EC2 KeyPair to enable SSH access to the instances
+    Type: 'AWS::EC2::KeyPair::KeyName'
+    Default: mryan
+    ConstraintDescription: must be the name of an existing EC2 KeyPair.
+  DBName:
+    Default: MyDatabase
+    Description: MySQL database name
+    Type: String
+    MinLength: '1'
+    MaxLength: '64'
+    AllowedPattern: '[a-zA-Z][a-zA-Z0-9]*'
+    ConstraintDescription: must begin with a letter and contain only alphanumeric characters.
+  DBUser:
+    NoEcho: 'true'
+    Description: Username for MySQL database access
+    Type: String
+    Default: dbuser
+    MinLength: '1'
+    MaxLength: '16'
+    AllowedPattern: '[a-zA-Z][a-zA-Z0-9]*'
+    ConstraintDescription: must begin with a letter and contain only alphanumeric characters.
+  DBPassword:
+    NoEcho: 'true'
+    Description: Password for MySQL database access
+    Type: String
+    Default: password
+    MinLength: '8'
+    MaxLength: '41'
+    AllowedPattern: '[a-zA-Z0-9]*'
+    ConstraintDescription: must contain only alphanumeric characters.
+  DBAllocatedStorage:
+    Default: '5'
+    Description: The size of the database (Gb)
+    Type: Number
+    MinValue: '5'
+    MaxValue: '1024'
+    ConstraintDescription: must be between 5 and 1024Gb.
+  DBInstanceClass:
+    Description: The database instance type
+    Type: String
+    Default: db.t2.micro
+    AllowedValues:
+      - db.t2.micro
+      - db.t2.small
+      - db.t2.medium
+      - db.t2.large
+    ConstraintDescription: must select a valid database instance type.
+  MultiAZDatabase:
+    Default: 'true'
+    Description: Create a ulti-AZ MySQL Amazon RDS database instance
+    Type: String
+    AllowedValues:
+      - 'true'
+      - 'false'
+    ConstraintDescription: must be either true or false.
+  WebServerCapacity:
+    Default: '2'
+    Description: The initial number of WebServer instances
+    Type: Number
+    MinValue: '1'
+    MaxValue: '5'
+    ConstraintDescription: must be between 1 and 5 EC2 instances.
+  InstanceType:
+    Description: WebServer EC2 instance type
+    Type: String
+    Default: t2.micro
+    AllowedValues:
+      - t2.micro
+      - t2.small
+      - t2.medium
+      - t2.large
+    ConstraintDescription: must be a valid EC2 instance type.
+  SSHLocation:
+    Description: ' The IP address range that can be used to SSH to the EC2 instances'
+    Type: String
+    MinLength: '9'
+    MaxLength: '18'
+    Default: 0.0.0.0/0
+    AllowedPattern: '(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})/(\d{1,2})'
+    ConstraintDescription: must be a valid IP CIDR range of the form x.x.x.x/x.
+Mappings:
+  AWSInstanceType2Arch:
+    t2.micro:
+      Arch: HVM64
+    t2.small:
+      Arch: HVM64
+    t2.medium:
+      Arch: HVM64
+    t2.large:
+      Arch: HVM64
+  AWSRegionArch2AMI:
+    af-south-1:
+      HVM64: ami-064cc455f8a1ef504
+    ap-east-1:
+      HVM64: ami-f85b1989
+    ap-northeast-1:
+      HVM64: ami-0b2c2a754d5b4da22
+    ap-northeast-2:
+      HVM64: ami-0493ab99920f410fc
+    ap-northeast-3:
+      HVM64: ami-01344f6f63a4decc1
+    ap-south-1:
+      HVM64: ami-03cfb5e1fb4fac428
+    ap-southeast-1:
+      HVM64: ami-0ba35dc9caf73d1c7
+    ap-southeast-2:
+      HVM64: ami-0ae99b503e8694028
+    ca-central-1:
+      HVM64: ami-0803e21a2ec22f953
+    cn-north-1:
+      HVM64: ami-07a3f215cc90c889c
+    cn-northwest-1:
+      HVM64: ami-0a3b3b10f714a0ff4
+    eu-central-1:
+      HVM64: ami-0474863011a7d1541
+    eu-north-1:
+      HVM64: ami-0de4b8910494dba0f
+    eu-south-1:
+      HVM64: ami-08427144fe9ebdef6
+    eu-west-1:
+      HVM64: ami-015232c01a82b847b
+    eu-west-2:
+      HVM64: ami-0765d48d7e15beb93
+    eu-west-3:
+      HVM64: ami-0caf07637eda19d9c
+    me-south-1:
+      HVM64: ami-0744743d80915b497
+    sa-east-1:
+      HVM64: ami-0a52e8a6018e92bb0
+    us-east-1:
+      HVM64: ami-019808f1c0995a94a
+    us-east-2:
+      HVM64: ami-027cab9a7bf0155df
+    us-west-1:
+      HVM64: ami-088c153f74339f34c
+    us-west-2:
+      HVM64: ami-01fee56b22f308154
+Resources:
+  ApplicationSubnet1:
+    Type: 'AWS::EC2::Subnet'
+    Properties:
+      VpcId: !ImportValue 
+        'Fn::Sub': '${ZPAStackName}-VPCID'
+      CidrBlock: !Ref ApplicationSubnet1CIDR
+      AvailabilityZone: !ImportValue 
+        'Fn::Sub': '${ZPAStackName}-AZ1'
+      Tags:
+        - Key: Name
+          Value: Application Subnet 1
+    Metadata:
+      'AWS::CloudFormation::Designer':
+        id: a55431d6-8433-4cd6-8a9b-ed0e37c4871a
+  ApplicationSubnet2:
+    Type: 'AWS::EC2::Subnet'
+    Properties:
+      VpcId: !ImportValue 
+        'Fn::Sub': '${ZPAStackName}-VPCID'
+      CidrBlock: !Ref ApplicationSubnet2CIDR
+      AvailabilityZone: !ImportValue 
+        'Fn::Sub': '${ZPAStackName}-AZ2'
+      Tags:
+        - Key: Name
+          Value: Application Subnet 2
+    Metadata:
+      'AWS::CloudFormation::Designer':
+        id: dcb02bfe-cb1b-41c5-a630-4e738d15c693
+  ApplicationSubnet1NetworkAclAssociation:
+    Type: 'AWS::EC2::SubnetNetworkAclAssociation'
+    Properties:
+      SubnetId: !Ref ApplicationSubnet1
+      NetworkAclId: !Ref ApplicationSubnet1NetworkAcl
+    Metadata:
+      'AWS::CloudFormation::Designer':
+        id: 0b32d91a-5a2d-43c1-a2ad-8ed23810f735
+  ApplicationSubnet2NetworkAclAssociation:
+    Type: 'AWS::EC2::SubnetNetworkAclAssociation'
+    Properties:
+      SubnetId: !Ref ApplicationSubnet2
+      NetworkAclId: !Ref ApplicationSubnet2NetworkAcl
+    Metadata:
+      'AWS::CloudFormation::Designer':
+        id: 6a5582c7-a3d9-4caf-acd7-a3cd93d7fcea
+  ApplicationSubnet1NetworkAclEntryInbound1:
+    Type: 'AWS::EC2::NetworkAclEntry'
+    Properties:
+      CidrBlock: !ImportValue 
+        'Fn::Sub': '${ZPAStackName}-PrivateSubnet1CIDR'
+      Egress: 'false'
+      NetworkAclId: !Ref ApplicationSubnet1NetworkAcl
+      Protocol: '-1'
+      RuleAction: allow
+      RuleNumber: '100'
+    Metadata:
+      'AWS::CloudFormation::Designer':
+        id: 8549bd57-98de-4cde-b1ca-1a510c92625d
+  ApplicationSubnet1NetworkAclEntryInbound2:
+    Type: 'AWS::EC2::NetworkAclEntry'
+    Properties:
+      CidrBlock: !ImportValue 
+        'Fn::Sub': '${ZPAStackName}-PrivateSubnet2CIDR'
+      Egress: 'false'
+      NetworkAclId: !Ref ApplicationSubnet1NetworkAcl
+      Protocol: '-1'
+      RuleAction: allow
+      RuleNumber: '101'
+    Metadata:
+      'AWS::CloudFormation::Designer':
+        id: faf28b35-0cf6-4bf2-9802-c478ed2c9546
+  ApplicationSubnet1NetworkAclEntryInbound3:
+    Type: 'AWS::EC2::NetworkAclEntry'
+    Properties:
+      CidrBlock: 0.0.0.0/0
+      Egress: 'false'
+      NetworkAclId: !Ref ApplicationSubnet1NetworkAcl
+      Protocol: '6'
+      PortRange:
+        From: 32768
+        To: 60999
+      RuleAction: allow
+      RuleNumber: '102'
+    Metadata:
+      'AWS::CloudFormation::Designer':
+        id: 1ab2c9bc-dc41-4309-a49a-ab9d0bd617a0
+  ApplicationSubnet1NetworkAclEntryInbound4:
+    Type: 'AWS::EC2::NetworkAclEntry'
+    Properties:
+      CidrBlock: !Ref ApplicationSubnet2CIDR
+      Egress: 'false'
+      NetworkAclId: !Ref ApplicationSubnet1NetworkAcl
+      Protocol: '6'
+      PortRange:
+        From: 3306
+        To: 3306
+      RuleAction: allow
+      RuleNumber: '103'
+    Metadata:
+      'AWS::CloudFormation::Designer':
+        id: c80d2c26-af72-4639-b4e9-d0ab98950cf2
+  ApplicationSubnet1NetworkAclEntryInbound5:
+    Type: 'AWS::EC2::NetworkAclEntry'
+    Properties:
+      CidrBlock: !Ref ApplicationSubnet2CIDR
+      Egress: 'false'
+      NetworkAclId: !Ref ApplicationSubnet1NetworkAcl
+      Protocol: '6'
+      PortRange:
+        From: 32768
+        To: 60999
+      RuleAction: allow
+      RuleNumber: '104'
+    Metadata:
+      'AWS::CloudFormation::Designer':
+        id: 8d26bfd0-6ecb-4507-b4d3-76c326a651ee
+  ApplicationSubnet1NetworkAclEntryOutbound1:
+    Type: 'AWS::EC2::NetworkAclEntry'
+    Properties:
+      CidrBlock: !ImportValue 
+        'Fn::Sub': '${ZPAStackName}-PrivateSubnet1CIDR'
+      Egress: 'true'
+      NetworkAclId: !Ref ApplicationSubnet1NetworkAcl
+      Protocol: '-1'
+      RuleAction: allow
+      RuleNumber: '100'
+    Metadata:
+      'AWS::CloudFormation::Designer':
+        id: 206ad205-c8e1-4491-8d52-0fd9c70ca54f
+  ApplicationSubnet1NetworkAclEntryOutbound2:
+    Type: 'AWS::EC2::NetworkAclEntry'
+    Properties:
+      CidrBlock: !ImportValue 
+        'Fn::Sub': '${ZPAStackName}-PrivateSubnet2CIDR'
+      Egress: 'true'
+      NetworkAclId: !Ref ApplicationSubnet1NetworkAcl
+      Protocol: '-1'
+      RuleAction: allow
+      RuleNumber: '101'
+    Metadata:
+      'AWS::CloudFormation::Designer':
+        id: 6685305b-92b3-4680-9309-11e403ebc1ff
+  ApplicationSubnet1NetworkAclEntryOutbound3:
+    Type: 'AWS::EC2::NetworkAclEntry'
+    Properties:
+      CidrBlock: 0.0.0.0/0
+      Egress: 'true'
+      NetworkAclId: !Ref ApplicationSubnet1NetworkAcl
+      Protocol: '6'
+      PortRange:
+        From: 80
+        To: 80
+      RuleAction: allow
+      RuleNumber: '102'
+    Metadata:
+      'AWS::CloudFormation::Designer':
+        id: 924d1dc6-cf84-42a8-b063-7cc875a6d815
+  ApplicationSubnet1NetworkAclEntryOutbound4:
+    Type: 'AWS::EC2::NetworkAclEntry'
+    Properties:
+      CidrBlock: 0.0.0.0/0
+      Egress: 'true'
+      NetworkAclId: !Ref ApplicationSubnet1NetworkAcl
+      Protocol: '6'
+      PortRange:
+        From: 443
+        To: 443
+      RuleAction: allow
+      RuleNumber: '103'
+    Metadata:
+      'AWS::CloudFormation::Designer':
+        id: 7f6449e5-7783-44a1-a6ef-716f2ca52a5e
+  ApplicationSubnet1NetworkAclEntryOutbound5:
+    Type: 'AWS::EC2::NetworkAclEntry'
+    Properties:
+      CidrBlock: !Ref ApplicationSubnet2CIDR
+      Egress: 'true'
+      NetworkAclId: !Ref ApplicationSubnet1NetworkAcl
+      Protocol: '6'
+      PortRange:
+        From: 3306
+        To: 3306
+      RuleAction: allow
+      RuleNumber: '104'
+    Metadata:
+      'AWS::CloudFormation::Designer':
+        id: c399ce13-4f05-4acf-b356-05480e57c8fd
+  ApplicationSubnet1NetworkAcl:
+    Type: 'AWS::EC2::NetworkAcl'
+    Properties:
+      VpcId: !ImportValue 
+        'Fn::Sub': '${ZPAStackName}-VPCID'
+      Tags:
+        - Key: Name
+          Value: NACL Protected Applications
+        - Key: Network
+          Value: NACL Protected
+    Metadata:
+      'AWS::CloudFormation::Designer':
+        id: b8dfa0db-93c9-4ca8-867e-21c67e36b01f
+  ApplicationSubnet1RouteTable:
+    Type: 'AWS::EC2::RouteTable'
+    Properties:
+      VpcId: !ImportValue 
+        'Fn::Sub': '${ZPAStackName}-VPCID'
+      Tags:
+        - Key: Name
+          Value: Application Subnet1 Route Table
+        - Key: Network
+          Value: Private
+    Metadata:
+      'AWS::CloudFormation::Designer':
+        id: 1005a235-5f98-4d95-90b3-235ac97126c4
+  ApplicationSubnet1Route:
+    Type: 'AWS::EC2::Route'
+    Properties:
+      RouteTableId: !Ref ApplicationSubnet1RouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId: !ImportValue 
+        'Fn::Sub': '${ZPAStackName}-NATGateway1'
+    Metadata:
+      'AWS::CloudFormation::Designer':
+        id: e322beb1-f31f-4289-ac35-b7c71447bea4
+  ApplicationSubnet2NetworkAclEntryInbound1:
+    Type: 'AWS::EC2::NetworkAclEntry'
+    Properties:
+      CidrBlock: !ImportValue 
+        'Fn::Sub': '${ZPAStackName}-PrivateSubnet1CIDR'
+      Egress: 'false'
+      NetworkAclId: !Ref ApplicationSubnet2NetworkAcl
+      Protocol: '-1'
+      RuleAction: allow
+      RuleNumber: '100'
+    Metadata:
+      'AWS::CloudFormation::Designer':
+        id: 0ecf0172-a3ff-4927-bdb2-34190e0c97c5
+  ApplicationSubnet2NetworkAclEntryInbound2:
+    Type: 'AWS::EC2::NetworkAclEntry'
+    Properties:
+      CidrBlock: !ImportValue 
+        'Fn::Sub': '${ZPAStackName}-PrivateSubnet2CIDR'
+      Egress: 'false'
+      NetworkAclId: !Ref ApplicationSubnet2NetworkAcl
+      Protocol: '-1'
+      RuleAction: allow
+      RuleNumber: '101'
+    Metadata:
+      'AWS::CloudFormation::Designer':
+        id: f8ddf457-07c6-424a-a3b8-880229be4a63
+  ApplicationSubnet2NetworkAclEntryInbound3:
+    Type: 'AWS::EC2::NetworkAclEntry'
+    Properties:
+      CidrBlock: 0.0.0.0/0
+      Egress: 'false'
+      NetworkAclId: !Ref ApplicationSubnet2NetworkAcl
+      Protocol: '6'
+      PortRange:
+        From: 32768
+        To: 60999
+      RuleAction: allow
+      RuleNumber: '102'
+    Metadata:
+      'AWS::CloudFormation::Designer':
+        id: 37e8d250-d104-40ab-8e60-9078f8c5e746
+  ApplicationSubnet2NetworkAclEntryInbound4:
+    Type: 'AWS::EC2::NetworkAclEntry'
+    Properties:
+      CidrBlock: !Ref ApplicationSubnet1CIDR
+      Egress: 'false'
+      NetworkAclId: !Ref ApplicationSubnet2NetworkAcl
+      Protocol: '6'
+      PortRange:
+        From: 32768
+        To: 60999
+      RuleAction: allow
+      RuleNumber: '103'
+    Metadata:
+      'AWS::CloudFormation::Designer':
+        id: 4f333fc7-2ba5-48e3-8af9-392fb3111400
+  ApplicationSubnet2NetworkAclEntryInbound5:
+    Type: 'AWS::EC2::NetworkAclEntry'
+    Properties:
+      CidrBlock: !Ref ApplicationSubnet1CIDR
+      Egress: 'false'
+      NetworkAclId: !Ref ApplicationSubnet2NetworkAcl
+      Protocol: '6'
+      PortRange:
+        From: 3306
+        To: 3306
+      RuleAction: allow
+      RuleNumber: '104'
+    Metadata:
+      'AWS::CloudFormation::Designer':
+        id: 689124bf-c332-442c-8035-293ea6b474e7
+  ApplicationSubnet2NetworkAclEntryOutbound1:
+    Type: 'AWS::EC2::NetworkAclEntry'
+    Properties:
+      CidrBlock: !ImportValue 
+        'Fn::Sub': '${ZPAStackName}-PrivateSubnet1CIDR'
+      Egress: 'true'
+      NetworkAclId: !Ref ApplicationSubnet2NetworkAcl
+      Protocol: '-1'
+      RuleAction: allow
+      RuleNumber: '100'
+    Metadata:
+      'AWS::CloudFormation::Designer':
+        id: 70d5c117-17a0-4443-a392-db06ca0b5658
+  ApplicationSubnet2NetworkAclEntryOutbound2:
+    Type: 'AWS::EC2::NetworkAclEntry'
+    Properties:
+      CidrBlock: !ImportValue 
+        'Fn::Sub': '${ZPAStackName}-PrivateSubnet2CIDR'
+      Egress: 'true'
+      NetworkAclId: !Ref ApplicationSubnet2NetworkAcl
+      Protocol: '-1'
+      RuleAction: allow
+      RuleNumber: '101'
+    Metadata:
+      'AWS::CloudFormation::Designer':
+        id: 666e4edd-03c1-477e-9915-9babc8fbbfe1
+  ApplicationSubnet2NetworkAclEntryOutbound3:
+    Type: 'AWS::EC2::NetworkAclEntry'
+    Properties:
+      CidrBlock: 0.0.0.0/0
+      Egress: 'true'
+      NetworkAclId: !Ref ApplicationSubnet2NetworkAcl
+      Protocol: '6'
+      PortRange:
+        From: 80
+        To: 80
+      RuleAction: allow
+      RuleNumber: '102'
+    Metadata:
+      'AWS::CloudFormation::Designer':
+        id: 0724a207-2d7a-4e23-b4cb-612e557a9e29
+  ApplicationSubnet2NetworkAclEntryOutbound4:
+    Type: 'AWS::EC2::NetworkAclEntry'
+    Properties:
+      CidrBlock: 0.0.0.0/0
+      Egress: 'true'
+      NetworkAclId: !Ref ApplicationSubnet2NetworkAcl
+      Protocol: '6'
+      PortRange:
+        From: 443
+        To: 443
+      RuleAction: allow
+      RuleNumber: '103'
+    Metadata:
+      'AWS::CloudFormation::Designer':
+        id: 18d5260c-871c-4df8-b7a6-77c36b9404e0
+  ApplicationSubnet2NetworkAclEntryOutbound5:
+    Type: 'AWS::EC2::NetworkAclEntry'
+    Properties:
+      CidrBlock: !Ref ApplicationSubnet1CIDR
+      Egress: 'true'
+      NetworkAclId: !Ref ApplicationSubnet2NetworkAcl
+      Protocol: '6'
+      PortRange:
+        From: 3306
+        To: 3306
+      RuleAction: allow
+      RuleNumber: '104'
+    Metadata:
+      'AWS::CloudFormation::Designer':
+        id: 3f494445-d269-4240-add1-04684c2ac6b1
+  ApplicationSubnet2NetworkAcl:
+    Type: 'AWS::EC2::NetworkAcl'
+    Properties:
+      VpcId: !ImportValue 
+        'Fn::Sub': '${ZPAStackName}-VPCID'
+      Tags:
+        - Key: Name
+          Value: NACL Protected Applications
+        - Key: Network
+          Value: NACL Protected
+    Metadata:
+      'AWS::CloudFormation::Designer':
+        id: 1184a12d-9066-4124-b4c4-39cd4c6e4f3d
+  ApplicationSubnet2RouteTable:
+    Type: 'AWS::EC2::RouteTable'
+    Properties:
+      VpcId: !ImportValue 
+        'Fn::Sub': '${ZPAStackName}-VPCID'
+      Tags:
+        - Key: Name
+          Value: Application Subnet2 Route Table
+        - Key: Network
+          Value: Private
+    Metadata:
+      'AWS::CloudFormation::Designer':
+        id: b11911bd-2428-4365-bb33-b7f21d9f05d0
+  ApplicationSubnet2Route:
+    Type: 'AWS::EC2::Route'
+    Properties:
+      RouteTableId: !Ref ApplicationSubnet2RouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId: !ImportValue 
+        'Fn::Sub': '${ZPAStackName}-NATGateway2'
+    Metadata:
+      'AWS::CloudFormation::Designer':
+        id: ea91915b-6d6a-4b17-a086-ec20d56c2d8e
+  Application1RouteTableAssociation:
+    Type: 'AWS::EC2::SubnetRouteTableAssociation'
+    Properties:
+      SubnetId: !Ref ApplicationSubnet1
+      RouteTableId: !Ref ApplicationSubnet1RouteTable
+  Application2RouteTableAssociation:
+    Type: 'AWS::EC2::SubnetRouteTableAssociation'
+    Properties:
+      SubnetId: !Ref ApplicationSubnet2
+      RouteTableId: !Ref ApplicationSubnet2RouteTable
+  ApplicationLoadBalancer:
+    Type: 'AWS::ElasticLoadBalancingV2::LoadBalancer'
+    Properties:
+      Subnets:
+        - !Ref ApplicationSubnet1
+        - !Ref ApplicationSubnet2
+      Scheme: internal
+      SecurityGroups:
+        - !Ref WebServerSecurityGroup
+    Metadata:
+      'AWS::CloudFormation::Designer':
+        id: 092adde2-92d7-49a1-9a1e-265143063490
+  ALBListener:
+    Type: 'AWS::ElasticLoadBalancingV2::Listener'
+    Properties:
+      DefaultActions:
+        - Type: forward
+          TargetGroupArn: !Ref ALBTargetGroup
+      LoadBalancerArn: !Ref ApplicationLoadBalancer
+      Port: '80'
+      Protocol: HTTP
+    Metadata:
+      'AWS::CloudFormation::Designer':
+        id: 43eb9c00-ea6b-448d-a236-1a1f35f3c418
+  ALBTargetGroup:
+    Type: 'AWS::ElasticLoadBalancingV2::TargetGroup'
+    Properties:
+      HealthCheckIntervalSeconds: 10
+      HealthCheckTimeoutSeconds: 5
+      HealthyThresholdCount: 2
+      Port: 80
+      Protocol: HTTP
+      UnhealthyThresholdCount: 5
+      VpcId: !ImportValue 
+        'Fn::Sub': '${ZPAStackName}-VPCID'
+      TargetGroupAttributes:
+        - Key: stickiness.enabled
+          Value: 'true'
+        - Key: stickiness.type
+          Value: lb_cookie
+        - Key: stickiness.lb_cookie.duration_seconds
+          Value: '30'
+    Metadata:
+      'AWS::CloudFormation::Designer':
+        id: 1ff9d993-9e4c-425e-a598-ae4819cf193b
+  WebServerGroup:
+    Type: 'AWS::AutoScaling::AutoScalingGroup'
+    Properties:
+      VPCZoneIdentifier:
+        - !Ref ApplicationSubnet1
+        - !Ref ApplicationSubnet2
+      LaunchConfigurationName: !Ref LaunchConfig
+      MinSize: '1'
+      MaxSize: '5'
+      DesiredCapacity: !Ref WebServerCapacity
+      TargetGroupARNs:
+        - !Ref ALBTargetGroup
+    CreationPolicy:
+      ResourceSignal:
+        Timeout: PT30M
+    UpdatePolicy:
+      AutoScalingRollingUpdate:
+        MinInstancesInService: '1'
+        MaxBatchSize: '1'
+        PauseTime: PT30M
+        WaitOnResourceSignals: 'true'
+    Metadata:
+      'AWS::CloudFormation::Designer':
+        id: 9421b790-34c2-42af-967b-497406afa339
+  LaunchConfig:
+    Type: 'AWS::AutoScaling::LaunchConfiguration'
+    Metadata:
+      'AWS::CloudFormation::Init':
+        configSets:
+          full_install:
+            - install_cfn
+            - install_ruby_3_0_3
+            - configure_mysql
+            - install_zws
+            - install_application
+        install_cfn:
+          files:
+            /etc/cfn/cfn-hup.conf:
+              content: !Join 
+                - ''
+                - - |
+                    [main]
+                  - stack=
+                  - !Ref 'AWS::StackId'
+                  - |+
+
+                  - region=
+                  - !Ref 'AWS::Region'
+                  - |+
+
+              mode: '000400'
+              owner: root
+              group: root
+            /etc/cfn/hooks.d/cfn-auto-reloader.conf:
+              content: !Join 
+                - ''
+                - - |
+                    [cfn-auto-reloader-hook]
+                  - |
+                    triggers=post.update
+                  - >
+                    path=Resources.LaunchConfig.Metadata.AWS::CloudFormation::Init
+                  - 'action=/opt/aws/bin/cfn-init -v '
+                  - '         --stack '
+                  - !Ref 'AWS::StackName'
+                  - '         --resource LaunchConfig '
+                  - '         --configsets full_install '
+                  - '         --region '
+                  - !Ref 'AWS::Region'
+                  - |+
+
+                  - |
+                    runas=root
+              mode: '000400'
+              owner: root
+              group: root
+          services:
+            sysvinit:
+              cfn-hup:
+                enabled: 'true'
+                ensureRunning: 'true'
+                files:
+                  - /etc/cfn/cfn-hup.conf
+                  - /etc/cfn/hooks.d/cfn-auto-reloader.conf
+        install_ruby_3_0_3:
+          files:
+            /tmp/install_ruby:
+              content: !Join 
+                - |+
+
+                - - '#!/bin/bash'
+                  - 'curl -sSL https://get.rvm.io | bash'
+                  - source /etc/profile.d/rvm.sh
+                  - rvm install 3.0.3
+                  - rvm --default use 3.0.3
+                  - gem install rails
+              mode: '000500'
+              owner: root
+              group: root
+          commands:
+            01_install_ruby:
+              command: /tmp/install_ruby > /var/log/install_ruby.log
+        configure_mysql:
+          packages:
+            yum:
+              mariadb: []
+              mariadb-devel: []
+              mariadb-libs: []
+        install_application:
+          files:
+            /tmp/database.yml:
+              content: !Join 
+                - ''
+                - - |
+                    development:
+                  - |2
+                      adapter: mysql2
+                  - |2
+                      encoding: utf8
+                  - |2
+                      reconnect: false
+                  - |2
+                      pool: 5
+                  - '  database: '
+                  - !Ref DBName
+                  - |+
+
+                  - '  username: '
+                  - !Ref DBUser
+                  - |+
+
+                  - '  password: '
+                  - !Ref DBPassword
+                  - |+
+
+                  - '  host: '
+                  - !GetAtt 
+                    - MySQLDatabase
+                    - Endpoint.Address
+                  - |+
+
+                  - '  port: '
+                  - !GetAtt 
+                    - MySQLDatabase
+                    - Endpoint.Port
+                  - |+
+
+              mode: '000400'
+              owner: root
+              group: root
+            /tmp/conditional_migration.rb:
+              content: !Join 
+                - ''
+                - - |
+                    class CreateNotes < ActiveRecord::Migration[5.1]
+                  - |2
+                      def change
+                  - |2
+                        if ! table_exists?(:notes)
+                  - |2
+                          create_table :notes do |t|
+                  - |2
+                            t.string :title
+                  - |2
+                            t.text :body
+                  - |2
+                            t.timestamps
+                  - |2
+                          end
+                  - |2
+                        end
+                  - |2
+                      end
+                  - |
+                    end
+              mode: '000500'
+              owner: root
+              group: root
+            /tmp/install_application:
+              content: !Join 
+                - ''
+                - - |
+                    #!/bin/bash -e
+                  - |
+                    source /etc/profile.d/rvm.sh
+                  - |
+                    rvm use 3.0.3
+                  - |
+                    export HOME=/home/ec2-user
+                  - |
+                    export PATH=$PATH:/usr/local/bin
+                  - |
+                    cd /home/ec2-user
+                  - |
+                    # Kill the rails server if it is running to allow update
+                  - |
+                    if pgrep ruby &> /dev/null ; then pkill -TERM ruby ; fi
+                  - |
+                    # This sample template creates a new application inline
+                  - |
+                    # Typically you would use files and/or sources to download
+                  - >
+                    # your application package and perform any configuration
+                    here.
+                  - >
+                    # Create a new application, with therubyracer javascript
+                    library
+                  - >
+                    rails new sample -d mysql --skip-spring --skip-bundle
+                    --force
+                  - |
+                    cd /home/ec2-user/sample
+                  - |
+                    sed -i 's/^# \(.*therubyracer.*$\)/\1/' Gemfile
+                  - >
+                    curl -o-
+                    https://raw.githubusercontent.com/nvm-sh/nvm/v0.34.0/install.sh
+                    | bash
+                  - |
+                    . ~/.nvm/nvm.sh
+                  - |
+                    nvm install node
+                  - |
+                    npm install --global yarn
+                  - |
+                    bundle install
+                  - |
+                    bundle exec rake webpacker:install
+                  - |
+                    # Create a sample scoffold
+                  - |
+                    rails generate scaffold Note title:string body:text --force
+                  - |
+                    # Configure the database connection
+                  - |
+                    mv /tmp/database.yml config
+                  - >
+                    # Since there are multiple instances running, conditionalize
+                    the migration
+                  - >
+                    # so that only 1 host creates the tables. In the real world,
+                    you may check to
+                  - >
+                    # see if the table matches the schema and do a migrate so
+                    that updates work
+                  - |
+                    file=$(find db/migrate/*create_notes* -type f -printf '%f')
+                  - |
+                    mv /tmp/conditional_migration.rb db/migrate/$file
+                  - |
+                    rake db:migrate
+                  - |
+                    cd config/environments
+                  - 'sed '':a;N;$!ba;s/\nend$/\n  config.hosts \<\< \"rails.'
+                  - !Ref 'AWS::Region'
+                  - .
+                  - !ImportValue 
+                    'Fn::Sub': '${ZPAStackName}-HostedZoneName'
+                  - \"\nend\n/g' development.rb >> development.rb
+                  - ''
+              mode: '000500'
+              owner: root
+              group: root
+            /home/ec2-user/start-application:
+              content: !Join 
+                - ''
+                - - |
+                    #!/bin/bash -e
+                  - |
+                    source /etc/profile.d/rvm.sh
+                  - |
+                    rvm use 3.0.3
+                  - |
+                    export HOME=/home/ec2-user
+                  - |
+                    export PATH=$PATH:/usr/local/bin
+                  - |
+                    cd /home/ec2-user/sample
+                  - |
+                    # Startup the application
+                  - |
+                    rails server --binding 0.0.0.0 -p 80 --daemon &
+                  - |
+                    echo started daemon
+              mode: '000500'
+              owner: root
+              group: root
+            /etc/systemd/system/myrailsapp.service:
+              content: !Join 
+                - ''
+                - - |
+                    [Unit]
+                  - |
+                    Description=Rails Server
+                  - |
+                    Requires=network.target
+                  - |
+                    [Service]
+                  - |
+                    Type=simple
+                  - |
+                    User=root
+                  - |
+                    Group=root
+                  - |
+                    WorkingDirectory=/home/ec2-user/sample
+                  - >
+                    ExecStart=/usr/bin/bash -lc 'bundle exec puma -C
+                    config/puma.rb --port 80'
+                  - |
+                    TimeoutSec=30
+                  - |
+                    RestartSec=15s
+                  - |
+                    Restart=always
+                  - |
+                    [Install]
+                  - |
+                    WantedBy=multi-user.target
+              mode: '000500'
+              owner: root
+              group: root
+          commands:
+            01_install_application:
+              command: /tmp/install_application > /var/log/install_application.log
+            02_configure_reboot:
+              command: echo /home/ec2-user/start-application >> /etc/rc.local
+            03_enable_service:
+              command: systemctl enable myrailsapp.service
+            04_start_service:
+              command: systemctl start myrailsapp.service
+            05_cleanup:
+              command: rm /tmp/install_application
+        install_zws:
+          files:
+            /opt/zscaler/bin/installzws.py:
+              content: !Join 
+                - ''
+                - - |
+                    #!/usr/bin/python3
+                  - |
+                    #
+                  - |
+                    # Copyright 2021 Zscaler - Mark Ryan
+                  - |
+                    # SPDX-License-Identifier: Apache-2.0
+                  - |
+                    #
+                  - |
+                    import requests, os, subprocess, boto3, tempfile, base64
+                  - |
+                    from edgeutils import ApiSession
+                  - |
+                    #Get AWS Environment
+                  - >
+                    region=requests.get("http://169.254.169.254/latest/meta-data/placement/region").text
+                  - |
+                    session = boto3.session.Session()
+                  - |
+                    ssm=session.client('ssm',region_name=region)
+                  - |
+                    #Retrieve ZWS Parameters from SSM
+                  - >
+                    Key=ssm.get_parameter(Name='ZWS-Key',WithDecryption=True)['Parameter']['Value']
+                  - >
+                    Cert=ssm.get_parameter(Name='ZWS-Cert',WithDecryption=True)['Parameter']['Value']
+                  - >
+                    ClientID=ssm.get_parameter(Name='ZWS-ClientID',WithDecryption=True)['Parameter']['Value']
+                  - >
+                    ClientSecret=ssm.get_parameter(Name='ZWS-ClientSecret',WithDecryption=True)['Parameter']['Value']
+                  - >
+                    SiteID=ssm.get_parameter(Name='ZWS-SiteID',WithDecryption=True)['Parameter']['Value']
+                  - >
+                    URLRoot=ssm.get_parameter(Name='ZWS-URLRoot',WithDecryption=True)['Parameter']['Value']
+                  - >
+                    #Write certificate to disk temporarily - required for
+                    requests.get to function
+                  - |
+                    cdisk = tempfile.NamedTemporaryFile(delete=False)
+                  - |
+                    cdisk.write(base64.b64decode(Cert))
+                  - |
+                    cdisk.close()
+                  - |
+                    kdisk = tempfile.NamedTemporaryFile(delete=False)
+                  - |
+                    kdisk.write(base64.b64decode(Key))
+                  - |
+                    kdisk.close()
+                  - >
+                    config={'url_root':"HTTPS://"+URLRoot, 'site_id': SiteID,
+                    'username': ClientID, 'password': ClientSecret, 'cert_file':
+                    cdisk.name, 'key_file': kdisk.name}
+                  - |
+                    #Create API Session
+                  - |
+                    api = ApiSession(config)
+                  - |
+                    #Query ZWS API for Installers - Download RHEL Latest Version
+                  - |
+                    installers = api.get('installers')
+                  - |
+                    for installer in installers:
+                  - |2
+                        if installer['distroName']=='RHEL':
+                  - |2
+                            params="x-auth-token="+requests.utils.quote(installer['authToken'])
+                  - |2
+                            uri=installer['uri']
+                  - |2
+                            fileName=installer['fileName']
+                  - |2
+                            download=requests.get(uri,params=params)
+                  - |2
+                            if download.status_code == 200:
+                  - |2
+                                with open("/tmp/"+fileName, 'wb') as out_file:
+                  - |2
+                                    out_file.write(download.content)
+                  - |2
+                            break
+                  - |
+                    os.unlink(cdisk.name)
+                  - |
+                    os.unlink(kdisk.name)
+                  - |
+                    #install RPM and set SiteID
+                  - >
+                    process=subprocess.run(['yum','-y','--nogpgcheck','install','/tmp/'+fileName])
+                  - >
+                    process=subprocess.run(['/opt/edgewise/bin/edgewise_setup','--set-site-id',SiteID])
+              mode: '000400'
+              owner: root
+              group: root
+          commands:
+            01_download_edgeutils:
+              command: >-
+                curl
+                https://raw.githubusercontent.com/EdgewiseNetworks/api-examples/master/v1/python/edgeutils.py
+                -o /opt/zscaler/bin/edgeutils.py
+            02_permissions_edgeutils:
+              command: chmod 700 /opt/zscaler/bin/edgeutils.py
+            03_pip_dependencies:
+              command: pip3 install boto3 requests
+            04_run_install:
+              command: python3 /opt/zscaler/bin/installzws.py
+      'AWS::CloudFormation::Designer':
+        id: b4316429-83e2-47bd-95d9-552ccb6f0fef
+    Properties:
+      ImageId: !FindInMap 
+        - AWSRegionArch2AMI
+        - !Ref 'AWS::Region'
+        - !FindInMap 
+          - AWSInstanceType2Arch
+          - !Ref InstanceType
+          - Arch
+      InstanceType: !Ref InstanceType
+      SecurityGroups:
+        - !Ref WebServerSecurityGroup
+      KeyName: !Ref KeyName
+      IamInstanceProfile: !Ref ApplicationInstanceProfile
+      UserData: !Base64 
+        'Fn::Join':
+          - ''
+          - - |
+              #!/bin/bash -xe
+            - |
+              yum update -y aws-cfn-bootstrap
+            - '/opt/aws/bin/cfn-init -v '
+            - '         --stack '
+            - !Ref 'AWS::StackId'
+            - '         --resource LaunchConfig '
+            - '         --configsets full_install '
+            - '         --region '
+            - !Ref 'AWS::Region'
+            - |+
+
+            - '/opt/aws/bin/cfn-signal -e 0 '
+            - '         --stack '
+            - !Ref 'AWS::StackId'
+            - '         --resource WebServerGroup '
+            - '         --region '
+            - !Ref 'AWS::Region'
+            - |+
+
+  ApplicationInstanceProfile:
+    Type: 'AWS::IAM::InstanceProfile'
+    Properties:
+      InstanceProfileName: Application-Instance-Profile
+      Path: /
+      Roles:
+        - !ImportValue 
+          'Fn::Sub': '${ZPAStackName}-InstanceRole'
+    Metadata:
+      'AWS::CloudFormation::Designer':
+        id: cdac43f4-a2c4-447e-a9a7-8892cfeda105
+  ApplicationInstancePolicy:
+    Type: 'AWS::IAM::Policy'
+    Properties:
+      PolicyName: ApplicationInstancePolicy
+      PolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Action: 'ec2:CreateTags'
+            Resource: 'arn:aws:ec2:*:*:instance/*'
+          - Effect: Allow
+            Action:
+              - 'kms:ListKeys'
+              - 'kms:ListAliases'
+              - 'kms:DescribeKey'
+              - 'tag:GetResources'
+              - 'ec2:DescribeTags'
+            Resource: '*'
+          - Effect: Allow
+            Action: 'ssm:GetParameter'
+            Resource: 'arn:aws:ssm:*:*:parameter/Z*'
+      Roles:
+        - !ImportValue 
+          'Fn::Sub': '${ZPAStackName}-InstanceRole'
+    Metadata:
+      'AWS::CloudFormation::Designer':
+        id: be5520fb-e313-4377-93dd-ca74811f25b0
+  WebServerSecurityGroup:
+    Type: 'AWS::EC2::SecurityGroup'
+    Properties:
+      GroupDescription: Enable HTTP access locked down to the load balancer + SSH access
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: '80'
+          ToPort: '80'
+          CidrIp: !Ref ApplicationSubnet1CIDR
+        - IpProtocol: tcp
+          FromPort: '80'
+          ToPort: '80'
+          CidrIp: !Ref ApplicationSubnet2CIDR
+        - IpProtocol: tcp
+          FromPort: '22'
+          ToPort: '22'
+          SourceSecurityGroupId: !ImportValue 
+            'Fn::Sub': '${ZPAStackName}-AppConnectorSecurityGroup'
+        - IpProtocol: tcp
+          FromPort: '22'
+          ToPort: '22'
+          SourceSecurityGroupId: !ImportValue 
+            'Fn::Sub': '${ZPAStackName}-AppConnectorSecurityGroup'
+        - IpProtocol: tcp
+          FromPort: '80'
+          ToPort: '80'
+          SourceSecurityGroupId: !ImportValue 
+            'Fn::Sub': '${ZPAStackName}-AppConnectorSecurityGroup'
+      VpcId: !ImportValue 
+        'Fn::Sub': '${ZPAStackName}-VPCID'
+    Metadata:
+      'AWS::CloudFormation::Designer':
+        id: ed047bf0-259a-4cd6-8cda-38cc9690fe81
+  DBEC2SecurityGroup:
+    Type: 'AWS::EC2::SecurityGroup'
+    Properties:
+      GroupDescription: Open database for access
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: '3306'
+          ToPort: '3306'
+          SourceSecurityGroupId: !Ref WebServerSecurityGroup
+      VpcId: !ImportValue 
+        'Fn::Sub': '${ZPAStackName}-VPCID'
+    Metadata:
+      'AWS::CloudFormation::Designer':
+        id: d8756a81-a316-4e44-a14a-4ba487ec76e3
+  DBSubnetGroup:
+    Type: 'AWS::RDS::DBSubnetGroup'
+    Properties:
+      DBSubnetGroupDescription: RDS DB Subnet Group
+      SubnetIds:
+        - !Ref ApplicationSubnet1
+        - !Ref ApplicationSubnet2
+    Metadata:
+      'AWS::CloudFormation::Designer':
+        id: c6f7d62b-526c-4766-a89b-75de0159a3b6
+  MySQLDatabase:
+    Type: 'AWS::RDS::DBInstance'
+    Properties:
+      Engine: MySQL
+      DBName: !Ref DBName
+      MultiAZ: !Ref MultiAZDatabase
+      MasterUsername: !Ref DBUser
+      MasterUserPassword: !Ref DBPassword
+      DBInstanceClass: !Ref DBInstanceClass
+      AllocatedStorage: !Ref DBAllocatedStorage
+      VPCSecurityGroups:
+        - !GetAtt 
+          - DBEC2SecurityGroup
+          - GroupId
+      DBSubnetGroupName:
+        Ref: DBSubnetGroup
+    Metadata:
+      'AWS::CloudFormation::Designer':
+        id: 6e99c279-1ef3-40cd-b308-b2a765dbe5f7
+  ApplicationRecord:
+    Type: 'AWS::Route53::RecordSet'
+    Properties:
+      HostedZoneId: !ImportValue 
+        'Fn::Sub': '${ZPAStackName}-HostedZoneId'
+      Comment: DNS name for my instance.
+      Name: !Join 
+        - ''
+        - - rails
+          - .
+          - !Ref 'AWS::Region'
+          - .
+          - !ImportValue 
+            'Fn::Sub': '${ZPAStackName}-HostedZoneName'
+          - .
+      Type: CNAME
+      TTL: '900'
+      ResourceRecords:
+        - !GetAtt 
+          - ApplicationLoadBalancer
+          - DNSName
+    Metadata:
+      'AWS::CloudFormation::Designer':
+        id: 31975d01-e972-4b98-a703-0c25ff30b922
+  CustomLambdaCreateSegments:
+    Type: 'Custom::LambdaCreateSegments'
+    DependsOn:
+      - WebServerSecurityGroup
+    Properties:
+      ServiceToken: !ImportValue 
+        'Fn::Sub': '${ZPAStackName}-LambdaCreateSegments'
+      Region: !Ref 'AWS::Region'
+      ParameterKeys: !Join 
+        - ','
+        - - !Sub ZSAC-ClientID
+          - !Sub ZSAC-ClientSecret
+          - !Sub ZSAC-CompanyID
+          - !Sub ZSAC-Base
+      Applications: !Join 
+        - ''
+        - - rails
+          - .
+          - !Ref 'AWS::Region'
+          - .
+          - !ImportValue 
+            'Fn::Sub': '${ZPAStackName}-HostedZoneName'
+      Adminport: '22'
+      Userport: '80'
+      VPCID: !ImportValue 
+        'Fn::Sub': '${ZPAStackName}-VPCID'
+      SegmentName: Rails
+    Metadata:
+      'AWS::CloudFormation::Designer':
+        id: 361ca6e9-ef1a-40e1-934a-e603e294d989
+Outputs:
+  WebsiteURL:
+    Value: !Join 
+      - ''
+      - - 'http://'
+        - !GetAtt 
+          - ApplicationLoadBalancer
+          - DNSName
+        - /notes
+    Description: URL for newly created Rails application
+Metadata:
+  'AWS::CloudFormation::Designer':
+    ed047bf0-259a-4cd6-8cda-38cc9690fe81:
+      size:
+        width: 60
+        height: 60
+      position:
+        x: 2430
+        'y': 550
+      z: 1
+      embeds: []
+    361ca6e9-ef1a-40e1-934a-e603e294d989:
+      size:
+        width: 60
+        height: 60
+      position:
+        x: 2530
+        'y': 660
+      z: 1
+      embeds: []
+      dependson:
+        - ed047bf0-259a-4cd6-8cda-38cc9690fe81
+    d8756a81-a316-4e44-a14a-4ba487ec76e3:
+      size:
+        width: 60
+        height: 60
+      position:
+        x: 2430
+        'y': -90
+      z: 2
+      parent: c6f7d62b-526c-4766-a89b-75de0159a3b6
+      embeds: []
+    be5520fb-e313-4377-93dd-ca74811f25b0:
+      size:
+        width: 60
+        height: 60
+      position:
+        x: 1990
+        'y': 610
+      z: 1
+      embeds: []
+    cdac43f4-a2c4-447e-a9a7-8892cfeda105:
+      size:
+        width: 60
+        height: 60
+      position:
+        x: 1990
+        'y': 690
+      z: 1
+      embeds: []
+    b4316429-83e2-47bd-95d9-552ccb6f0fef:
+      size:
+        width: 60
+        height: 60
+      position:
+        x: 2110
+        'y': 690
+      z: 1
+      embeds: []
+      isassociatedwith:
+        - ed047bf0-259a-4cd6-8cda-38cc9690fe81
+    1ff9d993-9e4c-425e-a598-ae4819cf193b:
+      size:
+        width: 60
+        height: 60
+      position:
+        x: 2330
+        'y': 840
+      z: 1
+      embeds: []
+    b11911bd-2428-4365-bb33-b7f21d9f05d0:
+      size:
+        width: 370
+        height: 610
+      position:
+        x: 2480
+        'y': 30
+      z: 1
+      embeds:
+        - ea91915b-6d6a-4b17-a086-ec20d56c2d8e
+        - dcb02bfe-cb1b-41c5-a630-4e738d15c693
+    ea91915b-6d6a-4b17-a086-ec20d56c2d8e:
+      size:
+        width: 60
+        height: 60
+      position:
+        x: 2770
+        'y': 560
+      z: 2
+      parent: b11911bd-2428-4365-bb33-b7f21d9f05d0
+      embeds: []
+      iscontainedinside:
+        - b11911bd-2428-4365-bb33-b7f21d9f05d0
+    1184a12d-9066-4124-b4c4-39cd4c6e4f3d:
+      size:
+        width: 260
+        height: 390
+      position:
+        x: 2520
+        'y': 100
+      z: 3
+      parent: dcb02bfe-cb1b-41c5-a630-4e738d15c693
+      embeds:
+        - 70d5c117-17a0-4443-a392-db06ca0b5658
+        - 0724a207-2d7a-4e23-b4cb-612e557a9e29
+        - 0ecf0172-a3ff-4927-bdb2-34190e0c97c5
+        - 689124bf-c332-442c-8035-293ea6b474e7
+        - f8ddf457-07c6-424a-a3b8-880229be4a63
+        - 37e8d250-d104-40ab-8e60-9078f8c5e746
+        - 4f333fc7-2ba5-48e3-8af9-392fb3111400
+        - 18d5260c-871c-4df8-b7a6-77c36b9404e0
+        - 3f494445-d269-4240-add1-04684c2ac6b1
+        - 666e4edd-03c1-477e-9915-9babc8fbbfe1
+    3f494445-d269-4240-add1-04684c2ac6b1:
+      size:
+        width: 60
+        height: 60
+      position:
+        x: 2710
+        'y': 410
+      z: 4
+      parent: 1184a12d-9066-4124-b4c4-39cd4c6e4f3d
+      embeds: []
+    18d5260c-871c-4df8-b7a6-77c36b9404e0:
+      size:
+        width: 60
+        height: 60
+      position:
+        x: 2710
+        'y': 340
+      z: 4
+      parent: 1184a12d-9066-4124-b4c4-39cd4c6e4f3d
+      embeds: []
+    0724a207-2d7a-4e23-b4cb-612e557a9e29:
+      size:
+        width: 60
+        height: 60
+      position:
+        x: 2710
+        'y': 270
+      z: 4
+      parent: 1184a12d-9066-4124-b4c4-39cd4c6e4f3d
+      embeds: []
+    666e4edd-03c1-477e-9915-9babc8fbbfe1:
+      size:
+        width: 60
+        height: 60
+      position:
+        x: 2710
+        'y': 200
+      z: 4
+      parent: 1184a12d-9066-4124-b4c4-39cd4c6e4f3d
+      embeds: []
+    70d5c117-17a0-4443-a392-db06ca0b5658:
+      size:
+        width: 60
+        height: 60
+      position:
+        x: 2710
+        'y': 130
+      z: 4
+      parent: 1184a12d-9066-4124-b4c4-39cd4c6e4f3d
+      embeds: []
+    689124bf-c332-442c-8035-293ea6b474e7:
+      size:
+        width: 60
+        height: 60
+      position:
+        x: 2530
+        'y': 420
+      z: 4
+      parent: 1184a12d-9066-4124-b4c4-39cd4c6e4f3d
+      embeds: []
+    4f333fc7-2ba5-48e3-8af9-392fb3111400:
+      size:
+        width: 60
+        height: 60
+      position:
+        x: 2530
+        'y': 350
+      z: 4
+      parent: 1184a12d-9066-4124-b4c4-39cd4c6e4f3d
+      embeds: []
+    37e8d250-d104-40ab-8e60-9078f8c5e746:
+      size:
+        width: 60
+        height: 60
+      position:
+        x: 2530
+        'y': 280
+      z: 4
+      parent: 1184a12d-9066-4124-b4c4-39cd4c6e4f3d
+      embeds: []
+    f8ddf457-07c6-424a-a3b8-880229be4a63:
+      size:
+        width: 60
+        height: 60
+      position:
+        x: 2530
+        'y': 210
+      z: 4
+      parent: 1184a12d-9066-4124-b4c4-39cd4c6e4f3d
+      embeds: []
+    0ecf0172-a3ff-4927-bdb2-34190e0c97c5:
+      size:
+        width: 60
+        height: 60
+      position:
+        x: 2530
+        'y': 140
+      z: 4
+      parent: 1184a12d-9066-4124-b4c4-39cd4c6e4f3d
+      embeds: []
+    1005a235-5f98-4d95-90b3-235ac97126c4:
+      size:
+        width: 360
+        height: 620
+      position:
+        x: 2070
+        'y': 30
+      z: 1
+      embeds:
+        - e322beb1-f31f-4289-ac35-b7c71447bea4
+        - a55431d6-8433-4cd6-8a9b-ed0e37c4871a
+    e322beb1-f31f-4289-ac35-b7c71447bea4:
+      size:
+        width: 60
+        height: 60
+      position:
+        x: 2340
+        'y': 570
+      z: 2
+      parent: 1005a235-5f98-4d95-90b3-235ac97126c4
+      embeds: []
+      iscontainedinside:
+        - 1005a235-5f98-4d95-90b3-235ac97126c4
+    b8dfa0db-93c9-4ca8-867e-21c67e36b01f:
+      size:
+        width: 270
+        height: 440
+      position:
+        x: 2100
+        'y': 90
+      z: 3
+      parent: a55431d6-8433-4cd6-8a9b-ed0e37c4871a
+      embeds:
+        - 8549bd57-98de-4cde-b1ca-1a510c92625d
+        - 8d26bfd0-6ecb-4507-b4d3-76c326a651ee
+        - 206ad205-c8e1-4491-8d52-0fd9c70ca54f
+        - c80d2c26-af72-4639-b4e9-d0ab98950cf2
+        - 1ab2c9bc-dc41-4309-a49a-ab9d0bd617a0
+        - faf28b35-0cf6-4bf2-9802-c478ed2c9546
+        - 6685305b-92b3-4680-9309-11e403ebc1ff
+        - 924d1dc6-cf84-42a8-b063-7cc875a6d815
+        - 7f6449e5-7783-44a1-a6ef-716f2ca52a5e
+        - c399ce13-4f05-4acf-b356-05480e57c8fd
+    c399ce13-4f05-4acf-b356-05480e57c8fd:
+      size:
+        width: 60
+        height: 60
+      position:
+        x: 2300
+        'y': 420
+      z: 4
+      parent: b8dfa0db-93c9-4ca8-867e-21c67e36b01f
+      embeds: []
+    7f6449e5-7783-44a1-a6ef-716f2ca52a5e:
+      size:
+        width: 60
+        height: 60
+      position:
+        x: 2300
+        'y': 350
+      z: 4
+      parent: b8dfa0db-93c9-4ca8-867e-21c67e36b01f
+      embeds: []
+    924d1dc6-cf84-42a8-b063-7cc875a6d815:
+      size:
+        width: 60
+        height: 60
+      position:
+        x: 2300
+        'y': 280
+      z: 4
+      parent: b8dfa0db-93c9-4ca8-867e-21c67e36b01f
+      embeds: []
+    6685305b-92b3-4680-9309-11e403ebc1ff:
+      size:
+        width: 60
+        height: 60
+      position:
+        x: 2300
+        'y': 200
+      z: 4
+      parent: b8dfa0db-93c9-4ca8-867e-21c67e36b01f
+      embeds: []
+    206ad205-c8e1-4491-8d52-0fd9c70ca54f:
+      size:
+        width: 60
+        height: 60
+      position:
+        x: 2300
+        'y': 130
+      z: 4
+      parent: b8dfa0db-93c9-4ca8-867e-21c67e36b01f
+      embeds: []
+    8d26bfd0-6ecb-4507-b4d3-76c326a651ee:
+      size:
+        width: 60
+        height: 60
+      position:
+        x: 2110
+        'y': 410
+      z: 4
+      parent: b8dfa0db-93c9-4ca8-867e-21c67e36b01f
+      embeds: []
+    c80d2c26-af72-4639-b4e9-d0ab98950cf2:
+      size:
+        width: 60
+        height: 60
+      position:
+        x: 2110
+        'y': 340
+      z: 4
+      parent: b8dfa0db-93c9-4ca8-867e-21c67e36b01f
+      embeds: []
+    1ab2c9bc-dc41-4309-a49a-ab9d0bd617a0:
+      size:
+        width: 60
+        height: 60
+      position:
+        x: 2110
+        'y': 270
+      z: 4
+      parent: b8dfa0db-93c9-4ca8-867e-21c67e36b01f
+      embeds: []
+    faf28b35-0cf6-4bf2-9802-c478ed2c9546:
+      size:
+        width: 60
+        height: 60
+      position:
+        x: 2110
+        'y': 200
+      z: 4
+      parent: b8dfa0db-93c9-4ca8-867e-21c67e36b01f
+      embeds: []
+    8549bd57-98de-4cde-b1ca-1a510c92625d:
+      size:
+        width: 60
+        height: 60
+      position:
+        x: 2110
+        'y': 130
+      z: 4
+      parent: b8dfa0db-93c9-4ca8-867e-21c67e36b01f
+      embeds: []
+    dcb02bfe-cb1b-41c5-a630-4e738d15c693:
+      size:
+        width: 330
+        height: 480
+      position:
+        x: 2500
+        'y': 60
+      z: 2
+      parent: b11911bd-2428-4365-bb33-b7f21d9f05d0
+      embeds:
+        - 1184a12d-9066-4124-b4c4-39cd4c6e4f3d
+    6a5582c7-a3d9-4caf-acd7-a3cd93d7fcea:
+      source:
+        id: 1184a12d-9066-4124-b4c4-39cd4c6e4f3d
+      target:
+        id: dcb02bfe-cb1b-41c5-a630-4e738d15c693
+    a55431d6-8433-4cd6-8a9b-ed0e37c4871a:
+      size:
+        width: 320
+        height: 500
+      position:
+        x: 2090
+        'y': 60
+      z: 2
+      parent: 1005a235-5f98-4d95-90b3-235ac97126c4
+      embeds:
+        - b8dfa0db-93c9-4ca8-867e-21c67e36b01f
+    c6f7d62b-526c-4766-a89b-75de0159a3b6:
+      size:
+        width: 240
+        height: 150
+      position:
+        x: 2290
+        'y': -150
+      z: 1
+      embeds:
+        - 6e99c279-1ef3-40cd-b308-b2a765dbe5f7
+        - d8756a81-a316-4e44-a14a-4ba487ec76e3
+      iscontainedinside:
+        - a55431d6-8433-4cd6-8a9b-ed0e37c4871a
+        - dcb02bfe-cb1b-41c5-a630-4e738d15c693
+    6e99c279-1ef3-40cd-b308-b2a765dbe5f7:
+      size:
+        width: 60
+        height: 60
+      position:
+        x: 2320
+        'y': -90
+      z: 2
+      parent: c6f7d62b-526c-4766-a89b-75de0159a3b6
+      embeds: []
+      isassociatedwith:
+        - d8756a81-a316-4e44-a14a-4ba487ec76e3
+      iscontainedinside:
+        - c6f7d62b-526c-4766-a89b-75de0159a3b6
+    9421b790-34c2-42af-967b-497406afa339:
+      size:
+        width: 60
+        height: 60
+      position:
+        x: 2430
+        'y': 740
+      z: 1
+      embeds: []
+      isassociatedwith:
+        - b4316429-83e2-47bd-95d9-552ccb6f0fef
+        - 1ff9d993-9e4c-425e-a598-ae4819cf193b
+      iscontainedinside:
+        - a55431d6-8433-4cd6-8a9b-ed0e37c4871a
+        - dcb02bfe-cb1b-41c5-a630-4e738d15c693
+    092adde2-92d7-49a1-9a1e-265143063490:
+      size:
+        width: 60
+        height: 60
+      position:
+        x: 2500
+        'y': 840
+      z: 1
+      embeds: []
+      isassociatedwith:
+        - ed047bf0-259a-4cd6-8cda-38cc9690fe81
+      iscontainedinside:
+        - a55431d6-8433-4cd6-8a9b-ed0e37c4871a
+        - dcb02bfe-cb1b-41c5-a630-4e738d15c693
+    31975d01-e972-4b98-a703-0c25ff30b922:
+      size:
+        width: 60
+        height: 60
+      position:
+        x: 2580
+        'y': 940
+      z: 1
+      embeds: []
+    43eb9c00-ea6b-448d-a236-1a1f35f3c418:
+      size:
+        width: 60
+        height: 60
+      position:
+        x: 2420
+        'y': 940
+      z: 1
+      embeds: []
+    0b32d91a-5a2d-43c1-a2ad-8ed23810f735:
+      source:
+        id: b8dfa0db-93c9-4ca8-867e-21c67e36b01f
+      target:
+        id: a55431d6-8433-4cd6-8a9b-ed0e37c4871a

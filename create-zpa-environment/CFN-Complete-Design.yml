@@ -1,0 +1,2229 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: >-
+  Creates SSM Function to securely store credentials.  Takes ZPA API Key and ZWS
+  API Key parameters and stores in SSM. Creates NAT gateways in  public subnets,
+  and deploys a Zscaler Private Access connector in each of two Private
+  subnets,  spanned across availability zones. The lambda function creates a
+  Provisioning Key, Connector Group, Server Group, for the App Connectors.  The
+  ZPA App Connectors automatically provision,  retrieving provisioning key from
+  API. Signing Cert lookup MUST find cert with name "Connector" in ZPA
+  Administration console, and will use first one it finds. The ZPA Connectors
+  connect outbound through the NAT Gateways and have no inbound connectivity.
+  DNS Entries for the connectors are created in Route53 so that the connectors
+  can be managed through ZPA. Lambda functions for securely storing SSM,
+  updating Route53, and ZPA API functions are created.
+Metadata:
+  'AWS::CloudFormation::Interface':
+    ParameterGroups:
+      - Label:
+          default: Security Credentials
+        Parameters:
+          - IAMUsername
+          - ZSACClientID
+          - ZSACClientSecret
+          - ZSACCompanyID
+          - ZSACBase
+          - ZWSKey
+          - ZWSCert
+          - ZWSClientID
+          - ZWSClientSecret
+          - ZWSSiteID
+          - ZWSURLRoot
+      - Label:
+          default: Application Configuration
+        Parameters:
+          - AdminPort
+          - UserPort
+          - KeyName
+      - Label:
+          default: VPC Configuration
+        Parameters:
+          - AvailabilityZones
+          - VPCCIDR
+          - PrivateSubnet1CIDR
+          - PrivateSubnet2CIDR
+          - PublicSubnet1CIDR
+          - PublicSubnet2CIDR
+          - InstanceType
+          - HostedZoneId
+          - HostedZoneName
+    ParameterLabels:
+      IAMUsername:
+        Default: mryan
+      ZSACClientID:
+        Default: >-
+          
+      ZSACClientSecret:
+        Default: ''
+      ZSACCompanyID:
+        Default: ''
+      ZSACBase:
+        Default: config.zpabeta.net
+      ZWSKey:
+        Default: 
+      ZWSCert:
+        Default: 
+      ZWSClientID:
+        Default: 
+      ZWSClientSecret:
+        Default: 
+      ZWSSiteID:
+        Default: 
+      ZWSURLRoot:
+        Default: 
+      AdminPort:
+        Default: '22'
+      UserPort:
+        Default: '80'
+      KeyName:
+        Default: mryan
+      VPCCIDR:
+        Default: 172.32.0.0/16
+      PrivateSubnet1CIDR:
+        Default: 172.32.128.0/28
+      PrivateSubnet2CIDR:
+        Default: 172.32.128.16/28
+      PublicSubnet1CIDR:
+        Default: 172.32.128.32/28
+      PublicSubnet2CIDR:
+        Default: 172.32.128.48/28
+      InstanceType:
+        Default: t2.micro
+      HostedZoneId:
+        Default: Z2YJS76M5PZBC1
+      HostedZoneName:
+        Default: welshgeek.net
+  'AWS::CloudFormation::Designer':
+    467fadfa-e1ae-40fe-a5ed-f4c1b0a06208:
+      size:
+        width: 60
+        height: 60
+      position:
+        x: -140
+        'y': 380
+      z: 1
+      embeds: []
+    d0c9aab7-b1e9-47a9-93b3-33b00f64000d:
+      size:
+        width: 60
+        height: 60
+      position:
+        x: -300
+        'y': 380
+      z: 1
+      embeds: []
+    f45982ec-109c-484d-991b-a5d5108fd5f2:
+      size:
+        width: 60
+        height: 60
+      position:
+        x: -370
+        'y': 1360
+      z: 1
+      embeds: []
+    f9140778-96f1-438f-abfe-e074e3954060:
+      size:
+        width: 60
+        height: 60
+      position:
+        x: -570
+        'y': 1360
+      z: 1
+      embeds: []
+    ccc05444-8af8-4de1-a956-66ab395c94f1:
+      size:
+        width: 60
+        height: 60
+      position:
+        x: -880
+        'y': 820
+      z: 0
+      embeds: []
+    e54314ab-0de7-4d1f-93f6-6a5bb1f2ae9a:
+      size:
+        width: 60
+        height: 60
+      position:
+        x: -460
+        'y': 1360
+      z: 1
+      embeds: []
+    0e2e285d-57a8-4848-99ef-914531bff5e7:
+      size:
+        width: 810
+        height: 720
+      position:
+        x: -840
+        'y': 670
+      z: 1
+      embeds:
+        - 854f3876-c6c9-4ee3-8356-60db5bc90d92
+        - 1c5e3139-e6ff-4312-9b07-e86f78738913
+        - 241b0f05-7086-43eb-bbf4-d4dbd0fecc85
+        - f9e8c6c6-5219-4b53-80c4-6191dd16fc48
+    9e9f6f0c-ce86-4f13-b9d2-d938229422e4:
+      size:
+        width: 60
+        height: 60
+      position:
+        x: -410
+        'y': 380
+      z: 1
+      embeds: []
+    241b0f05-7086-43eb-bbf4-d4dbd0fecc85:
+      size:
+        width: 60
+        height: 60
+      position:
+        x: -490
+        'y': 710
+      z: 2
+      parent: 0e2e285d-57a8-4848-99ef-914531bff5e7
+      embeds: []
+      iscontainedinside:
+        - 0e2e285d-57a8-4848-99ef-914531bff5e7
+    25dcc760-1cc7-4997-a007-b38d3c08ca66:
+      size:
+        width: 240
+        height: 230
+      position:
+        x: -390
+        'y': 740
+      z: 3
+      parent: 1c5e3139-e6ff-4312-9b07-e86f78738913
+      embeds:
+        - a9229e91-f6d2-457d-b9d5-ecc4e3daaee7
+    f9b09a3b-7e7b-43a0-adc7-c52cbea5a9a4:
+      size:
+        width: 200
+        height: 180
+      position:
+        x: -370
+        'y': 760
+      z: 3
+      parent: 1c5e3139-e6ff-4312-9b07-e86f78738913
+      embeds:
+        - 9898042f-99e1-4a4a-a2f9-352ea3b29309
+        - 7ff5b765-5517-46c7-9245-f0bb9414de38
+        - cfa84d7a-7cad-49b2-b64b-0baf30f996a9
+    9898042f-99e1-4a4a-a2f9-352ea3b29309:
+      size:
+        width: 60
+        height: 60
+      position:
+        x: -230
+        'y': 760
+      z: 4
+      parent: f9b09a3b-7e7b-43a0-adc7-c52cbea5a9a4
+      embeds: []
+    7ff5b765-5517-46c7-9245-f0bb9414de38:
+      size:
+        width: 60
+        height: 60
+      position:
+        x: -230
+        'y': 820
+      z: 4
+      parent: f9b09a3b-7e7b-43a0-adc7-c52cbea5a9a4
+      embeds: []
+    f50ce612-8abf-4a24-8079-d931ff573ec6:
+      size:
+        width: 240
+        height: 240
+      position:
+        x: -790
+        'y': 720
+      z: 3
+      parent: 854f3876-c6c9-4ee3-8356-60db5bc90d92
+      embeds:
+        - 8eb77205-47f5-4b5b-86c4-bc6bbed9666c
+        - b5eace00-0f98-4c32-b4b0-ee93156f3fe4
+    b5eace00-0f98-4c32-b4b0-ee93156f3fe4:
+      size:
+        width: 200
+        height: 190
+      position:
+        x: -770
+        'y': 750
+      z: 4
+      parent: f50ce612-8abf-4a24-8079-d931ff573ec6
+      embeds:
+        - 6ea09ad9-86aa-4b81-be11-852d7e084c37
+        - 455128da-be59-4400-a047-6c374fb7faa7
+        - 3bae2bdd-befe-4719-9dad-8f9ec209a30a
+    6ea09ad9-86aa-4b81-be11-852d7e084c37:
+      size:
+        width: 60
+        height: 60
+      position:
+        x: -630
+        'y': 750
+      z: 5
+      parent: b5eace00-0f98-4c32-b4b0-ee93156f3fe4
+      embeds: []
+    455128da-be59-4400-a047-6c374fb7faa7:
+      size:
+        width: 60
+        height: 60
+      position:
+        x: -630
+        'y': 810
+      z: 5
+      parent: b5eace00-0f98-4c32-b4b0-ee93156f3fe4
+      embeds: []
+    c2f52e67-10bf-4171-ace5-838569c73d12:
+      size:
+        width: 220
+        height: 240
+      position:
+        x: -450
+        'y': 1040
+      z: 3
+      parent: f9e8c6c6-5219-4b53-80c4-6191dd16fc48
+      embeds:
+        - 427c1539-35d9-4190-b407-8363a88fd0e6
+      iscontainedinside:
+        - 0e2e285d-57a8-4848-99ef-914531bff5e7
+    427c1539-35d9-4190-b407-8363a88fd0e6:
+      size:
+        width: 60
+        height: 60
+      position:
+        x: -440
+        'y': 1080
+      z: 4
+      parent: c2f52e67-10bf-4171-ace5-838569c73d12
+      embeds: []
+      iscontainedinside:
+        - c2f52e67-10bf-4171-ace5-838569c73d12
+        - c2f52e67-10bf-4171-ace5-838569c73d12
+    a9229e91-f6d2-457d-b9d5-ecc4e3daaee7:
+      size:
+        width: 60
+        height: 60
+      position:
+        x: -220
+        'y': 910
+      z: 4
+      parent: 25dcc760-1cc7-4997-a007-b38d3c08ca66
+      embeds: []
+      iscontainedinside:
+        - 25dcc760-1cc7-4997-a007-b38d3c08ca66
+        - 25dcc760-1cc7-4997-a007-b38d3c08ca66
+      dependson:
+        - 427c1539-35d9-4190-b407-8363a88fd0e6
+    ba9ab596-187d-44e1-96e8-7dbc47c7e4b9:
+      size:
+        width: 220
+        height: 240
+      position:
+        x: -690
+        'y': 1040
+      z: 3
+      parent: f9e8c6c6-5219-4b53-80c4-6191dd16fc48
+      embeds:
+        - 1565eca5-44d1-4b6c-9a5d-32c4833c683b
+      iscontainedinside:
+        - 0e2e285d-57a8-4848-99ef-914531bff5e7
+    1565eca5-44d1-4b6c-9a5d-32c4833c683b:
+      size:
+        width: 60
+        height: 60
+      position:
+        x: -660
+        'y': 1070
+      z: 4
+      parent: ba9ab596-187d-44e1-96e8-7dbc47c7e4b9
+      embeds: []
+      iscontainedinside:
+        - ba9ab596-187d-44e1-96e8-7dbc47c7e4b9
+    8eb77205-47f5-4b5b-86c4-bc6bbed9666c:
+      size:
+        width: 60
+        height: 60
+      position:
+        x: -620
+        'y': 900
+      z: 4
+      parent: f50ce612-8abf-4a24-8079-d931ff573ec6
+      embeds: []
+      iscontainedinside:
+        - f50ce612-8abf-4a24-8079-d931ff573ec6
+        - f50ce612-8abf-4a24-8079-d931ff573ec6
+      dependson:
+        - 1565eca5-44d1-4b6c-9a5d-32c4833c683b
+    f9e8c6c6-5219-4b53-80c4-6191dd16fc48:
+      size:
+        width: 540
+        height: 340
+      position:
+        x: -700
+        'y': 1010
+      z: 2
+      parent: 0e2e285d-57a8-4848-99ef-914531bff5e7
+      embeds:
+        - 4c8d008c-be21-4a5a-b6ea-164967fbeb7a
+        - ba9ab596-187d-44e1-96e8-7dbc47c7e4b9
+        - c2f52e67-10bf-4171-ace5-838569c73d12
+    4c8d008c-be21-4a5a-b6ea-164967fbeb7a:
+      size:
+        width: 60
+        height: 60
+      position:
+        x: -230
+        'y': 1290
+      z: 3
+      parent: f9e8c6c6-5219-4b53-80c4-6191dd16fc48
+      embeds: []
+      isassociatedwith:
+        - e54314ab-0de7-4d1f-93f6-6a5bb1f2ae9a
+      iscontainedinside:
+        - f9e8c6c6-5219-4b53-80c4-6191dd16fc48
+        - f9e8c6c6-5219-4b53-80c4-6191dd16fc48
+    1c5e3139-e6ff-4312-9b07-e86f78738913:
+      size:
+        width: 280
+        height: 270
+      position:
+        x: -410
+        'y': 710
+      z: 2
+      parent: 0e2e285d-57a8-4848-99ef-914531bff5e7
+      embeds:
+        - f9b09a3b-7e7b-43a0-adc7-c52cbea5a9a4
+        - 25dcc760-1cc7-4997-a007-b38d3c08ca66
+      iscontainedinside:
+        - 0e2e285d-57a8-4848-99ef-914531bff5e7
+    7b144bd3-7c6f-47c0-a201-2da36948273a:
+      source:
+        id: f9b09a3b-7e7b-43a0-adc7-c52cbea5a9a4
+      target:
+        id: 1c5e3139-e6ff-4312-9b07-e86f78738913
+      z: 1
+    854f3876-c6c9-4ee3-8356-60db5bc90d92:
+      size:
+        width: 270
+        height: 270
+      position:
+        x: -800
+        'y': 710
+      z: 2
+      parent: 0e2e285d-57a8-4848-99ef-914531bff5e7
+      embeds:
+        - f50ce612-8abf-4a24-8079-d931ff573ec6
+      iscontainedinside:
+        - 0e2e285d-57a8-4848-99ef-914531bff5e7
+    10d6d2d6-3f7e-4fb3-8d18-d4754893229e:
+      source:
+        id: b5eace00-0f98-4c32-b4b0-ee93156f3fe4
+      target:
+        id: 854f3876-c6c9-4ee3-8356-60db5bc90d92
+      z: 1
+    aedb59e4-c5f6-478d-9bd9-4e163b396565:
+      source:
+        id: 0e2e285d-57a8-4848-99ef-914531bff5e7
+      target:
+        id: e54314ab-0de7-4d1f-93f6-6a5bb1f2ae9a
+      z: 1
+    e239ed5e-38c4-4376-90a9-3f1faf61578d:
+      size:
+        width: 60
+        height: 60
+      position:
+        x: -550
+        'y': 200
+      z: 1
+      embeds: []
+    e73b1ec3-fc5b-4339-8edd-a50922e043f5:
+      size:
+        width: 60
+        height: 60
+      position:
+        x: -470
+        'y': 250
+      z: 1
+      embeds: []
+      isassociatedwith:
+        - e239ed5e-38c4-4376-90a9-3f1faf61578d
+    5e7e5d33-0785-48a6-a602-166c05b1b6f0:
+      size:
+        width: 60
+        height: 60
+      position:
+        x: -550
+        'y': 310
+      z: 0
+      embeds: []
+      isassociatedwith:
+        - e239ed5e-38c4-4376-90a9-3f1faf61578d
+    4e4835b2-00c8-4384-b71b-f0cf8d8c0e32:
+      size:
+        width: 60
+        height: 60
+      position:
+        x: -360
+        'y': 30
+      z: 1
+      embeds: []
+    1e21ca7e-c50b-4f35-a407-f6d6d8aa5bd3:
+      size:
+        width: 60
+        height: 60
+      position:
+        x: -460
+        'y': 130
+      z: 1
+      embeds: []
+    77870010-74ba-4a0e-a2c3-57e811dc59ac:
+      size:
+        width: 60
+        height: 60
+      position:
+        x: -300
+        'y': 180
+      z: 1
+      embeds: []
+      dependson:
+        - 1e21ca7e-c50b-4f35-a407-f6d6d8aa5bd3
+    75a0fa73-469b-4eee-ad42-1fed6f607b87:
+      size:
+        width: 60
+        height: 60
+      position:
+        x: -190
+        'y': 180
+      z: 1
+      embeds: []
+    cfa84d7a-7cad-49b2-b64b-0baf30f996a9:
+      size:
+        width: 60
+        height: 60
+      position:
+        x: -350
+        'y': 790
+      z: 4
+      parent: f9b09a3b-7e7b-43a0-adc7-c52cbea5a9a4
+      embeds: []
+      iscontainedinside:
+        - 1c5e3139-e6ff-4312-9b07-e86f78738913
+      dependson:
+        - 1565eca5-44d1-4b6c-9a5d-32c4833c683b
+        - 75a0fa73-469b-4eee-ad42-1fed6f607b87
+    804c589d-ef3f-442d-8ff2-ec5a4d932bd9:
+      size:
+        width: 60
+        height: 60
+      position:
+        x: -350
+        'y': 560
+      z: 1
+      embeds: []
+    3bae2bdd-befe-4719-9dad-8f9ec209a30a:
+      size:
+        width: 60
+        height: 60
+      position:
+        x: -750
+        'y': 780
+      z: 5
+      parent: b5eace00-0f98-4c32-b4b0-ee93156f3fe4
+      embeds: []
+      iscontainedinside:
+        - 854f3876-c6c9-4ee3-8356-60db5bc90d92
+      dependson:
+        - 1565eca5-44d1-4b6c-9a5d-32c4833c683b
+        - 75a0fa73-469b-4eee-ad42-1fed6f607b87
+    60564cfe-8a06-492f-9317-06cbb5941996:
+      size:
+        width: 60
+        height: 60
+      position:
+        x: -750
+        'y': 570
+      z: 1
+      embeds: []
+    aba2ff12-eced-4970-8de3-a2f4de307655:
+      size:
+        width: 60
+        height: 60
+      position:
+        x: -300
+        'y': 470
+      z: 1
+      embeds: []
+      dependson:
+        - 1e21ca7e-c50b-4f35-a407-f6d6d8aa5bd3
+    a9548794-6e9f-4a03-b70a-b5f7577cd422:
+      size:
+        width: 60
+        height: 60
+      position:
+        x: -520
+        'y': 520
+      z: 1
+      embeds: []
+    0554d955-1f46-43de-be39-39f90a0e9b6e:
+      size:
+        width: 60
+        height: 60
+      position:
+        x: -300
+        'y': 270
+      z: 1
+      embeds: []
+      dependson:
+        - 1e21ca7e-c50b-4f35-a407-f6d6d8aa5bd3
+    20bde93e-1350-4327-a954-b5265ec91018:
+      size:
+        width: 60
+        height: 60
+      position:
+        x: -50
+        'y': 250
+      z: 1
+      embeds: []
+      dependson:
+        - 4e4835b2-00c8-4384-b71b-f0cf8d8c0e32
+        - 1e21ca7e-c50b-4f35-a407-f6d6d8aa5bd3
+    2634a433-35fd-4924-9a20-d13fe491fc78:
+      size:
+        width: 60
+        height: 60
+      position:
+        x: -50
+        'y': 330
+      z: 1
+      embeds: []
+      dependson:
+        - 4e4835b2-00c8-4384-b71b-f0cf8d8c0e32
+        - 1e21ca7e-c50b-4f35-a407-f6d6d8aa5bd3
+        - 0554d955-1f46-43de-be39-39f90a0e9b6e
+    beceec7f-4773-44a5-9195-37088e5973c9:
+      size:
+        width: 60
+        height: 60
+      position:
+        x: -460
+        'y': 30
+      z: 1
+      embeds: []
+Parameters:
+  IAMUsername:
+    Description: >-
+      Name of the IAM user who will be the administrator of the KMS key we
+      create. This user will be able to encrypt values and manage the key.
+    Default: mryan
+    Type: String
+  ZSACClientID:
+    Type: String
+    NoEcho: true
+    Description: ZPA API Client ID
+    Default: 
+    MinLength: 72
+  ZSACClientSecret:
+    Type: String
+    NoEcho: true
+    Description: ZPA API Client Secret
+    Default: ''
+    MinLength: 32
+  ZSACCompanyID:
+    Type: String
+    NoEcho: true
+    Description: ZPA Company ID
+    Default: ''
+    MinLength: 16
+  ZSACBase:
+    Type: String
+    NoEcho: true
+    Description: ZPA API Base URL (e.g. config.private.zscaler.com)
+    Default: config.zpabeta.net
+    MinLength: 18
+  ZWSKey:
+    Type: String
+    NoEcho: true
+    Description: Client Cert Private Key - Base64 Encoded - 'cat client.key | base64'
+    Default: 
+    MinLength: 72
+  ZWSCert:
+    Type: String
+    NoEcho: true
+    Description: Client Certificate - Base64 Encoded - 'cat client.crt | base64'
+    Default: 
+    MinLength: 32
+  ZWSClientID:
+    Type: String
+    NoEcho: true
+    Description: Client ID for API Key
+    Default: 
+    MinLength: 16
+  ZWSClientSecret:
+    Type: String
+    NoEcho: true
+    Description: Client Secret for API Key
+    Default: 
+    MinLength: 10
+  ZWSSiteID:
+    Type: String
+    NoEcho: true
+    Description: ZWS Site ID
+    Default: 
+    MinLength: 18
+  ZWSURLRoot:
+    Type: String
+    NoEcho: true
+    Description: ZWS URL Root
+    Default: 
+    MinLength: 18
+  AdminPort:
+    Description: Port for Admin Access
+    Default: '22'
+    Type: Number
+    MinValue: 1
+    MaxValue: 65535
+  UserPort:
+    Default: '80'
+    Type: Number
+    MinValue: 1
+    MaxValue: 65535
+  KeyName:
+    Description: SSH Keypair to login to the instance
+    Type: 'AWS::EC2::KeyPair::KeyName'
+    Default: mryan
+  AvailabilityZones:
+    Description: >-
+      List of Availability Zones to use for the subnets in the VPC. Note: The
+      logical order is preserved.
+    Type: 'List<AWS::EC2::AvailabilityZone::Name>'
+  VPCCIDR:
+    AllowedPattern: >-
+      ^(([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])\.){3}([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])(\/(1[6-9]|2[0-8]))$
+    ConstraintDescription: CIDR block parameter must be in the form x.x.x.x/16-28
+    Default: 172.32.0.0/16
+    Description: CIDR block for VPC
+    Type: String
+  PrivateSubnet1CIDR:
+    AllowedPattern: >-
+      ^(([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])\.){3}([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])(\/(1[6-9]|2[0-8]))$
+    ConstraintDescription: CIDR block parameter must be in the form x.x.x.x/16-28
+    Default: 172.32.128.0/28
+    Description: 'CIDR block for App Connector 1, Subnet 1 located in Availability Zone 1'
+    Type: String
+  PrivateSubnet2CIDR:
+    AllowedPattern: >-
+      ^(([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])\.){3}([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])(\/(1[6-9]|2[0-8]))$
+    ConstraintDescription: CIDR block parameter must be in the form x.x.x.x/16-28
+    Default: 172.32.128.16/28
+    Description: 'CIDR block for App Connector 2, Subnet 2 located in Availability Zone 2'
+    Type: String
+  PublicSubnet1CIDR:
+    AllowedPattern: >-
+      ^(([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])\.){3}([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])(\/(1[6-9]|2[0-8]))$
+    ConstraintDescription: CIDR block parameter must be in the form x.x.x.x/16-28
+    Default: 172.32.128.32/28
+    Description: 'CIDR block for NAT Gateway1, Subnet 1 located in Availability Zone 1'
+    Type: String
+  PublicSubnet2CIDR:
+    AllowedPattern: >-
+      ^(([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])\.){3}([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])(\/(1[6-9]|2[0-8]))$
+    ConstraintDescription: CIDR block parameter must be in the form x.x.x.x/16-28
+    Default: 172.32.128.48/28
+    Description: 'CIDR block for NAT Gateway2, Subnet 2 located in Availability Zone 1'
+    Type: String
+  InstanceType:
+    Description: ZPA Connector EC2 instance type
+    Type: String
+    Default: t2.micro
+    AllowedValues:
+      - t2.micro
+      - c4.xlarge
+      - c5.xlarge
+      - m4.xlarge
+      - m5.xlarge
+    ConstraintDescription: must be a valid EC2 instance type.
+  HostedZoneId:
+    Type: String
+    Description: The ID For the Route53 hosted zone.
+    AllowedPattern: '(?!-)[a-zA-Z0-9-.]{1,63}(?<!-)'
+    ConstraintDescription: Must be a valid DNS Zone ID.
+    Default: Z2YJS76M5PZBC1
+  HostedZoneName:
+    Type: String
+    Description: >-
+      The ID For the hosted zone.  Use Zone ID rather than domain suffix since
+      private/public DNS may be present.
+    AllowedPattern: '(?!-)[a-zA-Z0-9-.]{1,63}(?<!-)'
+    ConstraintDescription: Must be a valid DNS zone name.
+    Default: welshgeek.net
+Mappings:
+  AWSInstanceType2Arch:
+    t2.micro:
+      Arch: HVM64
+    c4.xlarge:
+      Arch: HVM64
+    m4.xlarge:
+      Arch: HVM64
+    c5.xlarge:
+      Arch: HVM64
+    m5.xlarge:
+      Arch: HVM64
+  AWSRegionArch2AMI:
+    us-east-1:
+      PV64: NOT_SUPPORTED
+      HVM64: ami-06e4ca020762bfc43
+      HVMG2: NOT_SUPPORTED
+    us-west-2:
+      PV64: NOT_SUPPORTED
+      HVM64: NOT_SUPPORTED
+      HVMG2: NOT_SUPPORTED
+    us-west-1:
+      PV64: NOT_SUPPORTED
+      HVM64: NOT_SUPPORTED
+      HVMG2: NOT_SUPPORTED
+    eu-west-1:
+      PV64: NOT_SUPPORTED
+      HVM64: NOT_SUPPORTED
+      HVMG2: NOT_SUPPORTED
+    eu-west-2:
+      PV64: NOT_SUPPORTED
+      HVM64: NOT_SUPPORTED
+      HVMG2: NOT_SUPPORTED
+    eu-west-3:
+      PV64: NOT_SUPPORTED
+      HVM64: NOT_SUPPORTED
+      HVMG2: NOT_SUPPORTED
+    eu-central-1:
+      PV64: NOT_SUPPORTED
+      HVM64: NOT_SUPPORTED
+      HVMG2: NOT_SUPPORTED
+    ap-northeast-1:
+      PV64: NOT_SUPPORTED
+      HVM64: NOT_SUPPORTED
+      HVMG2: NOT_SUPPORTED
+    ap-northeast-2:
+      PV64: NOT_SUPPORTED
+      HVM64: NOT_SUPPORTED
+      HVMG2: NOT_SUPPORTED
+    ap-northeast-3:
+      PV64: NOT_SUPPORTED
+      HVM64: NOT_SUPPORTED
+      HVMG2: NOT_SUPPORTED
+    ap-southeast-1:
+      PV64: NOT_SUPPORTED
+      HVM64: NOT_SUPPORTED
+      HVMG2: NOT_SUPPORTED
+    ap-southeast-2:
+      PV64: NOT_SUPPORTED
+      HVM64: NOT_SUPPORTED
+      HVMG2: NOT_SUPPORTED
+    ap-south-1:
+      PV64: NOT_SUPPORTED
+      HVM64: NOT_SUPPORTED
+      HVMG2: NOT_SUPPORTED
+    us-east-2:
+      PV64: NOT_SUPPORTED
+      HVM64: ami-0f2bd52972ecf45f8
+      HVMG2: NOT_SUPPORTED
+    ca-central-1:
+      PV64: NOT_SUPPORTED
+      HVM64: NOT_SUPPORTED
+      HVMG2: NOT_SUPPORTED
+    sa-east-1:
+      PV64: NOT_SUPPORTED
+      HVM64: NOT_SUPPORTED
+      HVMG2: NOT_SUPPORTED
+    cn-north-1:
+      PV64: NOT_SUPPORTED
+      HVM64: NOT_SUPPORTED
+      HVMG2: NOT_SUPPORTED
+    cn-northwest-1:
+      PV64: NOT_SUPPORTED
+      HVM64: NOT_SUPPORTED
+      HVMG2: NOT_SUPPORTED
+Resources:
+  ZSACEncryptionKey:
+    Properties:
+      Description: Encryption key for secret config values for the Parameter Store
+      EnableKeyRotation: false
+      Enabled: true
+      MultiRegion: true
+      KeyPolicy:
+        Id: key-default-1
+        Statement:
+          - Action:
+              - 'kms:Create*'
+              - 'kms:Encrypt'
+              - 'kms:Describe*'
+              - 'kms:Enable*'
+              - 'kms:List*'
+              - 'kms:Put*'
+              - 'kms:Update*'
+              - 'kms:Revoke*'
+              - 'kms:Disable*'
+              - 'kms:Get*'
+              - 'kms:Delete*'
+              - 'kms:ScheduleKeyDeletion'
+              - 'kms:CancelKeyDeletion'
+            Effect: Allow
+            Principal:
+              AWS:
+                - 'Fn::Sub': 'arn:aws:iam::${AWS::AccountId}:user/${IAMUsername}'
+            Resource: '*'
+            Sid: Allow administration of the key & encryption of new values
+          - Action:
+              - 'kms:Encrypt'
+              - 'kms:Decrypt'
+              - 'kms:ReEncrypt*'
+              - 'kms:GenerateDataKey*'
+              - 'kms:DescribeKey'
+            Effect: Allow
+            Principal:
+              AWS:
+                - 'Fn::GetAtt': ZSACFunctionRole.Arn
+                - 'Fn::GetAtt': ZSACInstanceRole.Arn
+            Resource: '*'
+            Sid: Allow use of the key
+        Version: 2012-10-17
+    Type: 'AWS::KMS::Key'
+    Metadata:
+      'AWS::CloudFormation::Designer':
+        id: 1e21ca7e-c50b-4f35-a407-f6d6d8aa5bd3
+  ZSACEncryptionKeyAlias:
+    Properties:
+      AliasName: alias/ZSACKey
+      TargetKeyId:
+        Ref: ZSACEncryptionKey
+    Type: 'AWS::KMS::Alias'
+    Metadata:
+      'AWS::CloudFormation::Designer':
+        id: beceec7f-4773-44a5-9195-37088e5973c9
+  ZSACFunctionRole:
+    Properties:
+      AssumeRolePolicyDocument:
+        Statement:
+          - Action:
+              - 'sts:AssumeRole'
+            Effect: Allow
+            Principal:
+              Service:
+                - lambda.amazonaws.com
+        Version: 2012-10-17
+      Policies:
+        - PolicyDocument:
+            Statement:
+              - Action:
+                  - 'ssm:GetParameter*'
+                  - 'ssm:PutParameter'
+                  - 'ssm:DeleteParameter'
+                Effect: Allow
+                Resource:
+                  'Fn::Sub': 'arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/ZSAC*'
+            Version: 2012-10-17
+          PolicyName: ZSACParameterAccess
+        - PolicyDocument:
+            Statement:
+              - Action:
+                  - 'ssm:GetParameter*'
+                  - 'ssm:PutParameter'
+                  - 'ssm:DeleteParameter'
+                Effect: Allow
+                Resource:
+                  'Fn::Sub': 'arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/ZWS*'
+            Version: 2012-10-17
+          PolicyName: ZWSParameterAccess
+        - PolicyDocument:
+            Statement:
+              - Action:
+                  - 'logs:CreateLogGroup'
+                  - 'logs:CreateLogStream'
+                  - 'logs:PutLogEvents'
+                Effect: Allow
+                Resource: '*'
+            Version: 2012-10-17
+          PolicyName: ZSACLambdaBasicExecution
+        - PolicyDocument:
+            Statement:
+              - Action:
+                  - 'xray:PutTraceSegments'
+                  - 'xray:PutTelemetryRecords'
+                Effect: Allow
+                Resource: '*'
+            Version: 2012-10-17
+          PolicyName: ZSACXRayAccess
+        - PolicyDocument:
+            Statement:
+              - Action:
+                  - 'kms:Encrypt'
+                  - 'kms:Decrypt'
+                  - 'kms:ReEncrypt*'
+                  - 'kms:GenerateDataKey*'
+                  - 'kms:CreateGrant'
+                  - 'kms:DescribeKey'
+                Effect: Allow
+                Resource: '*'
+            Version: 2012-10-17
+          PolicyName: ZSACKMSAccess
+    Type: 'AWS::IAM::Role'
+    Metadata:
+      'AWS::CloudFormation::Designer':
+        id: 4e4835b2-00c8-4384-b71b-f0cf8d8c0e32
+  ZSACInstanceRole:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Action:
+              - 'sts:AssumeRole'
+            Effect: Allow
+            Principal:
+              Service:
+                - ec2.amazonaws.com
+      Path: /
+    Metadata:
+      'AWS::CloudFormation::Designer':
+        id: e239ed5e-38c4-4376-90a9-3f1faf61578d
+  VpcId:
+    Type: 'AWS::EC2::VPC'
+    Properties:
+      CidrBlock: !Ref VPCCIDR
+      InstanceTenancy: default
+      EnableDnsSupport: 'true'
+      EnableDnsHostnames: 'true'
+    Metadata:
+      'AWS::CloudFormation::Designer':
+        id: 0e2e285d-57a8-4848-99ef-914531bff5e7
+  InternetGateway:
+    Type: 'AWS::EC2::InternetGateway'
+    Metadata:
+      'AWS::CloudFormation::Designer':
+        id: e54314ab-0de7-4d1f-93f6-6a5bb1f2ae9a
+  VPCGatewayAttachment:
+    Type: 'AWS::EC2::VPCGatewayAttachment'
+    Properties:
+      VpcId: !Ref VpcId
+      InternetGatewayId: !Ref InternetGateway
+    Metadata:
+      'AWS::CloudFormation::Designer':
+        id: aedb59e4-c5f6-478d-9bd9-4e163b396565
+  DHCPOptions:
+    Type: 'AWS::EC2::DHCPOptions'
+    Properties:
+      DomainName: !Ref HostedZoneName
+      DomainNameServers:
+        - AmazonProvidedDNS
+    Metadata:
+      'AWS::CloudFormation::Designer':
+        id: ccc05444-8af8-4de1-a956-66ab395c94f1
+  ZPAConnector1:
+    Type: 'AWS::EC2::Instance'
+    DependsOn:
+      - NATGateway1
+      - CreateZPAProvisioningKeyConnectorGroupServerGroup
+    Properties:
+      ImageId: !FindInMap 
+        - AWSRegionArch2AMI
+        - !Ref 'AWS::Region'
+        - !FindInMap 
+          - AWSInstanceType2Arch
+          - !Ref InstanceType
+          - Arch
+      InstanceType: !Ref InstanceType
+      NetworkInterfaces:
+        - DeviceIndex: '0'
+          GroupSet:
+            - !Ref AppConnectorSecurityGroup
+        - SubnetId: !Ref PrivateSubnet1
+      Tags:
+        - Key: Name
+          Value: ZPAConnector1
+      IamInstanceProfile: !Ref AppConnectorInstanceProfile
+      KeyName: !Ref KeyName
+      UserData: !Base64 
+        'Fn::Join':
+          - ''
+          - - |
+              #!/bin/bash
+            - |
+              /opt/zscaler/bin/provision.sh
+            - |
+              python3 /opt/zscaler/bin/installzws.py
+    Metadata:
+      'AWS::CloudFormation::Designer':
+        id: 3bae2bdd-befe-4719-9dad-8f9ec209a30a
+  ZPAConnector2:
+    Type: 'AWS::EC2::Instance'
+    DependsOn:
+      - NATGateway1
+      - CreateZPAProvisioningKeyConnectorGroupServerGroup
+    Properties:
+      ImageId: !FindInMap 
+        - AWSRegionArch2AMI
+        - !Ref 'AWS::Region'
+        - !FindInMap 
+          - AWSInstanceType2Arch
+          - !Ref InstanceType
+          - Arch
+      InstanceType: !Ref InstanceType
+      NetworkInterfaces:
+        - DeviceIndex: '0'
+          GroupSet:
+            - !Ref AppConnectorSecurityGroup
+        - SubnetId: !Ref PrivateSubnet2
+      Tags:
+        - Key: Name
+          Value: ZPAConnector2
+      IamInstanceProfile: !Ref AppConnectorInstanceProfile
+      KeyName: !Ref KeyName
+      UserData: !Base64 
+        'Fn::Join':
+          - ''
+          - - |
+              #!/bin/bash
+            - |
+              /opt/zscaler/bin/provision.sh
+            - |
+              python3 /opt/zscaler/bin/installzws.py
+    Metadata:
+      'AWS::CloudFormation::Designer':
+        id: cfa84d7a-7cad-49b2-b64b-0baf30f996a9
+  AppConnectorInstanceProfile:
+    Type: 'AWS::IAM::InstanceProfile'
+    Properties:
+      InstanceProfileName: App-Connector-Instance-Profile
+      Path: /
+      Roles:
+        - !Ref ZSACInstanceRole
+    Metadata:
+      'AWS::CloudFormation::Designer':
+        id: 5e7e5d33-0785-48a6-a602-166c05b1b6f0
+  AppConnectorInstancePolicy:
+    Type: 'AWS::IAM::Policy'
+    Properties:
+      PolicyName: AppConnectorInstancePolicy
+      PolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Action: 'ec2:CreateTags'
+            Resource: 'arn:aws:ec2:*:*:instance/*'
+          - Effect: Allow
+            Action:
+              - 'kms:ListKeys'
+              - 'kms:ListAliases'
+              - 'kms:DescribeKey'
+              - 'tag:GetResources'
+              - 'ec2:DescribeTags'
+            Resource: '*'
+          - Effect: Allow
+            Action: 'ssm:GetParameter'
+            Resource: 'arn:aws:ssm:*:*:parameter/Z*'
+      Roles:
+        - !Ref ZSACInstanceRole
+    Metadata:
+      'AWS::CloudFormation::Designer':
+        id: e73b1ec3-fc5b-4339-8edd-a50922e043f5
+  ZPA1DNS:
+    Type: 'AWS::Route53::RecordSet'
+    Properties:
+      HostedZoneId: !Ref HostedZoneId
+      Comment: DNS name for my instance.
+      Name: !Join 
+        - ''
+        - - !Ref ZPAConnector1
+          - .
+          - !Ref 'AWS::Region'
+          - .
+          - !Ref HostedZoneName
+          - .
+      Type: A
+      TTL: '900'
+      ResourceRecords:
+        - !GetAtt 
+          - ZPAConnector1
+          - PrivateIp
+    Metadata:
+      'AWS::CloudFormation::Designer':
+        id: 60564cfe-8a06-492f-9317-06cbb5941996
+  ZPA2DNS:
+    Type: 'AWS::Route53::RecordSet'
+    Properties:
+      HostedZoneId: !Ref HostedZoneId
+      Comment: DNS name for my instance.
+      Name: !Join 
+        - ''
+        - - !Ref ZPAConnector2
+          - .
+          - !Ref 'AWS::Region'
+          - .
+          - !Ref HostedZoneName
+          - .
+      Type: A
+      TTL: '900'
+      ResourceRecords:
+        - !GetAtt 
+          - ZPAConnector2
+          - PrivateIp
+    Metadata:
+      'AWS::CloudFormation::Designer':
+        id: 804c589d-ef3f-442d-8ff2-ec5a4d932bd9
+  PrivateSubnet1:
+    Type: 'AWS::EC2::Subnet'
+    Properties:
+      VpcId: !Ref VpcId
+      CidrBlock: !Ref PrivateSubnet1CIDR
+      AvailabilityZone: !Select 
+        - '0'
+        - !Ref AvailabilityZones
+      Tags:
+        - Key: Name
+          Value: Private subnet 1
+    Metadata:
+      'AWS::CloudFormation::Designer':
+        id: 854f3876-c6c9-4ee3-8356-60db5bc90d92
+  PrivateSubnet2:
+    Type: 'AWS::EC2::Subnet'
+    Properties:
+      VpcId: !Ref VpcId
+      CidrBlock: !Ref PrivateSubnet2CIDR
+      AvailabilityZone: !Select 
+        - '1'
+        - !Ref AvailabilityZones
+      Tags:
+        - Key: Name
+          Value: Private subnet 2
+    Metadata:
+      'AWS::CloudFormation::Designer':
+        id: 1c5e3139-e6ff-4312-9b07-e86f78738913
+  PrivateSubnet1RouteTableAssociation:
+    Type: 'AWS::EC2::SubnetRouteTableAssociation'
+    Properties:
+      SubnetId: !Ref PrivateSubnet1
+      RouteTableId: !Ref PrivateSubnet1RouteTable
+  PrivateSubnet1NetworkAclAssociation:
+    Type: 'AWS::EC2::SubnetNetworkAclAssociation'
+    Properties:
+      SubnetId: !Ref PrivateSubnet1
+      NetworkAclId: !Ref PrivateSubnet1NetworkAcl
+    Metadata:
+      'AWS::CloudFormation::Designer':
+        id: 10d6d2d6-3f7e-4fb3-8d18-d4754893229e
+  PrivateSubnet2RouteTableAssociation:
+    Type: 'AWS::EC2::SubnetRouteTableAssociation'
+    Properties:
+      SubnetId: !Ref PrivateSubnet2
+      RouteTableId: !Ref PrivateSubnet2RouteTable
+  PrivateSubnet2NetworkAclAssociation:
+    Type: 'AWS::EC2::SubnetNetworkAclAssociation'
+    Properties:
+      SubnetId: !Ref PrivateSubnet2
+      NetworkAclId: !Ref PrivateSubnet2NetworkAcl
+    Metadata:
+      'AWS::CloudFormation::Designer':
+        id: 7b144bd3-7c6f-47c0-a201-2da36948273a
+  PublicSubnetRouteTable:
+    Type: 'AWS::EC2::RouteTable'
+    Properties:
+      VpcId: !Ref VpcId
+      Tags:
+        - Key: Name
+          Value: NAT Gateway Public Subnet Route Table
+        - Key: Network
+          Value: Public
+    Metadata:
+      'AWS::CloudFormation::Designer':
+        id: f9e8c6c6-5219-4b53-80c4-6191dd16fc48
+  PublicSubnet1RouteTableAssociation:
+    Type: 'AWS::EC2::SubnetRouteTableAssociation'
+    Properties:
+      SubnetId: !Ref PublicSubnet1
+      RouteTableId: !Ref PublicSubnetRouteTable
+  PublicSubnet2RouteTableAssociation:
+    Type: 'AWS::EC2::SubnetRouteTableAssociation'
+    Properties:
+      SubnetId: !Ref PublicSubnet2
+      RouteTableId: !Ref PublicSubnetRouteTable
+  PublicSubnetRoute:
+    Type: 'AWS::EC2::Route'
+    Properties:
+      RouteTableId: !Ref PublicSubnetRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref InternetGateway
+    Metadata:
+      'AWS::CloudFormation::Designer':
+        id: 4c8d008c-be21-4a5a-b6ea-164967fbeb7a
+  NAT1EIP:
+    Type: 'AWS::EC2::EIP'
+    Properties:
+      Domain: vpc
+    Metadata:
+      'AWS::CloudFormation::Designer':
+        id: f9140778-96f1-438f-abfe-e074e3954060
+  NAT2EIP:
+    Type: 'AWS::EC2::EIP'
+    Properties:
+      Domain: vpc
+    Metadata:
+      'AWS::CloudFormation::Designer':
+        id: f45982ec-109c-484d-991b-a5d5108fd5f2
+  PublicSubnet1:
+    Type: 'AWS::EC2::Subnet'
+    Properties:
+      VpcId: !Ref VpcId
+      CidrBlock: !Ref PublicSubnet1CIDR
+      AvailabilityZone: !Select 
+        - '0'
+        - !Ref AvailabilityZones
+      Tags:
+        - Key: Name
+          Value: NATGW1 Subnet
+      MapPublicIpOnLaunch: true
+    Metadata:
+      'AWS::CloudFormation::Designer':
+        id: ba9ab596-187d-44e1-96e8-7dbc47c7e4b9
+  PublicSubnet2:
+    Type: 'AWS::EC2::Subnet'
+    Properties:
+      VpcId: !Ref VpcId
+      CidrBlock: !Ref PublicSubnet2CIDR
+      AvailabilityZone: !Select 
+        - '1'
+        - !Ref AvailabilityZones
+      Tags:
+        - Key: Name
+          Value: NATGW2 Subnet
+      MapPublicIpOnLaunch: true
+    Metadata:
+      'AWS::CloudFormation::Designer':
+        id: c2f52e67-10bf-4171-ace5-838569c73d12
+  NATGateway1:
+    Type: 'AWS::EC2::NatGateway'
+    Properties:
+      AllocationId: !GetAtt 
+        - NAT1EIP
+        - AllocationId
+      SubnetId: !Ref PublicSubnet1
+    Metadata:
+      'AWS::CloudFormation::Designer':
+        id: 1565eca5-44d1-4b6c-9a5d-32c4833c683b
+  NATGateway2:
+    Type: 'AWS::EC2::NatGateway'
+    Properties:
+      AllocationId: !GetAtt 
+        - NAT2EIP
+        - AllocationId
+      SubnetId: !Ref PublicSubnet2
+    Metadata:
+      'AWS::CloudFormation::Designer':
+        id: 427c1539-35d9-4190-b407-8363a88fd0e6
+  PrivateSubnet1NetworkAclEntryInbound:
+    Type: 'AWS::EC2::NetworkAclEntry'
+    Properties:
+      CidrBlock: 0.0.0.0/0
+      Egress: 'false'
+      NetworkAclId: !Ref PrivateSubnet1NetworkAcl
+      Protocol: '-1'
+      RuleAction: allow
+      RuleNumber: '100'
+    Metadata:
+      'AWS::CloudFormation::Designer':
+        id: 455128da-be59-4400-a047-6c374fb7faa7
+  PrivateSubnet1NetworkAclEntryOutbound:
+    Type: 'AWS::EC2::NetworkAclEntry'
+    Properties:
+      CidrBlock: 0.0.0.0/0
+      Egress: 'true'
+      NetworkAclId: !Ref PrivateSubnet1NetworkAcl
+      Protocol: '-1'
+      RuleAction: allow
+      RuleNumber: '100'
+    Metadata:
+      'AWS::CloudFormation::Designer':
+        id: 6ea09ad9-86aa-4b81-be11-852d7e084c37
+  PrivateSubnet1NetworkAcl:
+    Type: 'AWS::EC2::NetworkAcl'
+    Properties:
+      VpcId: !Ref VpcId
+      Tags:
+        - Key: Name
+          Value: NACL Protected App Connector Subnet1
+        - Key: Network
+          Value: NACL Protected
+    Metadata:
+      'AWS::CloudFormation::Designer':
+        id: b5eace00-0f98-4c32-b4b0-ee93156f3fe4
+  PrivateSubnet1RouteTable:
+    Type: 'AWS::EC2::RouteTable'
+    Properties:
+      VpcId: !Ref VpcId
+      Tags:
+        - Key: Name
+          Value: Private App Connector Subnet1
+        - Key: Network
+          Value: Private
+    Metadata:
+      'AWS::CloudFormation::Designer':
+        id: f50ce612-8abf-4a24-8079-d931ff573ec6
+  PrivateSubnet1Route:
+    Type: 'AWS::EC2::Route'
+    Properties:
+      RouteTableId: !Ref PrivateSubnet1RouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+    DependsOn:
+      - NATGateway1
+    Metadata:
+      'AWS::CloudFormation::Designer':
+        id: 8eb77205-47f5-4b5b-86c4-bc6bbed9666c
+  PrivateSubnet2NetworkAclEntryInbound:
+    Type: 'AWS::EC2::NetworkAclEntry'
+    Properties:
+      CidrBlock: 0.0.0.0/0
+      Egress: 'false'
+      NetworkAclId: !Ref PrivateSubnet2NetworkAcl
+      Protocol: '-1'
+      RuleAction: allow
+      RuleNumber: '100'
+    Metadata:
+      'AWS::CloudFormation::Designer':
+        id: 7ff5b765-5517-46c7-9245-f0bb9414de38
+  PrivateSubnet2NetworkAclEntryOutbound:
+    Type: 'AWS::EC2::NetworkAclEntry'
+    Properties:
+      CidrBlock: 0.0.0.0/0
+      Egress: 'true'
+      NetworkAclId: !Ref PrivateSubnet2NetworkAcl
+      Protocol: '-1'
+      RuleAction: allow
+      RuleNumber: '100'
+    Metadata:
+      'AWS::CloudFormation::Designer':
+        id: 9898042f-99e1-4a4a-a2f9-352ea3b29309
+  PrivateSubnet2NetworkAcl:
+    Type: 'AWS::EC2::NetworkAcl'
+    Properties:
+      VpcId: !Ref VpcId
+      Tags:
+        - Key: Name
+          Value: NACL Protected App Connector Subnet2
+        - Key: Network
+          Value: NACL Protected
+    Metadata:
+      'AWS::CloudFormation::Designer':
+        id: f9b09a3b-7e7b-43a0-adc7-c52cbea5a9a4
+  PrivateSubnet2RouteTable:
+    Type: 'AWS::EC2::RouteTable'
+    Properties:
+      VpcId: !Ref VpcId
+      Tags:
+        - Key: Name
+          Value: Private App Connector Subnet2
+        - Key: Network
+          Value: Private
+    Metadata:
+      'AWS::CloudFormation::Designer':
+        id: 25dcc760-1cc7-4997-a007-b38d3c08ca66
+  PrivateSubnet2Route:
+    Type: 'AWS::EC2::Route'
+    Properties:
+      RouteTableId: !Ref PrivateSubnet2RouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+    DependsOn:
+      - NATGateway2
+    Metadata:
+      'AWS::CloudFormation::Designer':
+        id: a9229e91-f6d2-457d-b9d5-ecc4e3daaee7
+  AppConnectorSecurityGroup:
+    Type: 'AWS::EC2::SecurityGroup'
+    Properties:
+      GroupDescription: Allow SSH Inbound.  All Outbound.
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: 172.31.0.0/0
+      SecurityGroupEgress:
+        - IpProtocol: -1
+          FromPort: -1
+          CidrIp: 0.0.0.0/0
+    Metadata:
+      'AWS::CloudFormation::Designer':
+        id: 241b0f05-7086-43eb-bbf4-d4dbd0fecc85
+  LambdaFunctionSSM:
+    Type: 'AWS::Lambda::Function'
+    DependsOn:
+      - ZSACFunctionRole
+      - ZSACEncryptionKey
+    Properties:
+      Description: Storing secure string in Parameter
+      FunctionName: CreateSecureStringSSMParameterStore
+      Role: !GetAtt ZSACFunctionRole.Arn
+      Timeout: 10
+      Handler: index.lambda_handler
+      Runtime: python3.8
+      Code:
+        ZipFile: |
+          import boto3
+          import json
+          import logging
+          import cfnresponse
+
+          logger = logging.getLogger()
+
+          def lambda_handler(event, context):
+            response = {
+              'StackId': event['StackId'],
+              'RequestId': event['RequestId'],
+              'LogicalResourceId': event['LogicalResourceId'],
+              'Status': 'SUCCESS',
+              'Data': {}
+            }
+            responseData = {}
+            physicalResourceId = {}
+            # Read the values of the parameter we passed in. Comma Delimited List of  
+            # ParameterKeys and ParameterValues and KmsKeyId need to be passed.
+            parameter_keys = event['ResourceProperties']['ParameterKeys']
+            parameter_values = event['ResourceProperties']['ParameterValues']
+            kms_key_id = event['ResourceProperties']['KmsKeyId']
+
+            parameter_key_list = parameter_keys.split(',')
+            parameter_value_list = parameter_values.split(',')
+
+            logger.debug(parameter_key_list)
+            logger.debug(parameter_value_list)
+
+            length = len(parameter_key_list)
+            i = 0
+            
+            client = boto3.client('ssm')
+            if event['RequestType'] == 'Delete':
+              while i < length:
+                 ssm_response = client.delete_parameter(
+                      Name = parameter_key_list[i]
+                 )
+                 i += 1
+              cfnresponse.send(event, context, cfnresponse.SUCCESS, responseData, physicalResourceId)
+              return
+
+            # For each parameter we passed in, create secure string parameter,
+            while i < length:
+               ssm_response = client.put_parameter(
+                    Name = parameter_key_list[i],
+                    Value=parameter_value_list[i],
+                    Type='SecureString',
+                    KeyId=kms_key_id,
+                    Tier='Standard',
+                    Overwrite=True
+               )
+               i += 1
+            cfnresponse.send(event, context, cfnresponse.SUCCESS, responseData, physicalResourceId)
+            return response
+    Metadata:
+      'AWS::CloudFormation::Designer':
+        id: 0554d955-1f46-43de-be39-39f90a0e9b6e
+  CreateSecureStringSSM:
+    Type: 'Custom::CreateSecureStringSSM'
+    DependsOn:
+      - ZSACFunctionRole
+      - ZSACEncryptionKey
+      - LambdaFunctionSSM
+    Properties:
+      ServiceToken: !Sub >-
+        arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:CreateSecureStringSSMParameterStore
+      ParameterKeys: !Join 
+        - ','
+        - - !Sub ZSAC-ClientID
+          - !Sub ZSAC-ClientSecret
+          - !Sub ZSAC-CompanyID
+          - !Sub ZSAC-Base
+      ParameterValues: !Join 
+        - ','
+        - - !Ref ZSACClientID
+          - !Ref ZSACClientSecret
+          - !Ref ZSACCompanyID
+          - !Ref ZSACBase
+      ParameteraDescriptions: !Join 
+        - ','
+        - - ZSAC-ClientID
+          - ZSAC-ClientSecret
+          - ZSAC-CompanyID
+          - ZSAC-Base
+      KmsKeyId: !Sub 'arn:aws:kms:${AWS::Region}:${AWS::AccountId}:alias/ZSACKey'
+    Metadata:
+      'AWS::CloudFormation::Designer':
+        id: 2634a433-35fd-4924-9a20-d13fe491fc78
+  LambdaCreateSegments:
+    Type: 'AWS::Lambda::Function'
+    DependsOn:
+      - ZSACFunctionRole
+      - ZSACEncryptionKey
+    Properties:
+      Description: >-
+        Create Application Segments in ZPA, Segment Groups, and policy to allow
+        Access
+      FunctionName: LambdaCreateSegments
+      Role: !GetAtt ZSACFunctionRole.Arn
+      Timeout: 10
+      Handler: index.lambda_handler
+      Runtime: python3.8
+      Code:
+        ZipFile: |
+          import boto3
+          import cfnresponse
+          import logging
+          import urllib3
+          import json
+
+          logger = logging.getLogger()
+
+          def lambda_handler(event, context):
+            # Creating response object
+            response = {
+              'StackId': event['StackId'],
+              'RequestId': event['RequestId'],
+              'LogicalResourceId': event['LogicalResourceId'],
+              'Status': 'SUCCESS',
+              'Data': {},
+              'physicalResourceId': {}
+            }
+            responseData = {}
+            physicalResourceId = {}
+
+            # Read the values of the parameter we passed in. Comma Delimited List of  
+            # ParameterKeys and ParameterValues and KmsKeyId need to be passed.
+            parameter_keys = event['ResourceProperties']['ParameterKeys']
+            parameter_key_list = parameter_keys.split(',')
+            Region=event['ResourceProperties']['Region']
+            applications = event['ResourceProperties']['Applications']
+            application_list = applications.split(',')
+            segment_name = event['ResourceProperties']['SegmentName']
+            adminport = event['ResourceProperties']['Adminport']
+            userport = event['ResourceProperties']['Userport']
+            VPCID=event['ResourceProperties']['VPCID']
+
+            logger.debug(application_list)
+            length = len(parameter_key_list)
+            i = 0
+            
+            client = boto3.client('ssm')
+
+            while i < length:
+               ssm_response = client.get_parameter(
+                    Name = parameter_key_list[i],
+                    WithDecryption=True
+               )
+               if "ZSAC-ClientID" in parameter_key_list[i]:
+                    client_id=ssm_response["Parameter"]["Value"]
+               if "ZSAC-ClientSecret" in parameter_key_list[i]:
+                    client_secret=ssm_response["Parameter"]["Value"]
+               if "ZSAC-CompanyID" in parameter_key_list[i]:
+                    company=ssm_response["Parameter"]["Value"]
+               if "ZSAC-Base" in parameter_key_list[i]:
+                    zscaler_base=ssm_response["Parameter"]["Value"]
+               i += 1
+
+            #Login to API and retrieve bearer token
+
+            data={'client_id':client_id,'client_secret':client_secret}
+            URL='https://'+zscaler_base+'/signin'
+            http = urllib3.PoolManager()
+            bearer=json.loads(http.request('POST',URL, fields=data).data.decode('utf-8'))["access_token"]
+            HEADERS={'authorization':'Bearer %s' % bearer,'accept': '*/*','Content-Type': 'application/json'}
+
+            #Handle Delete - Retrive Application Segment, Segment Group, and Policy
+            #If Segment Group contains just one segment, delete segement group and policy ; then delete segement
+            #Otherwie just delete segment, and remove segement from segement group.
+            if event['RequestType'] == 'Delete':
+
+              #Retrieve Policy
+              Global='https://'+zscaler_base+'/mgmtconfig/v1/admin/customers/'+company+'/policySet/global'
+              policySet=json.loads(http.request('GET',Global,headers=HEADERS).data.decode('utf-8'))
+              policySetId=policySet['id']
+              #Retrieve User Segment Group
+              SGURL='https://'+zscaler_base+'/mgmtconfig/v1/admin/customers/'+company+'/segmentGroup?page=&pagesize=&search=AWS_User'
+              SegmentGroupData=json.loads(http.request('GET',SGURL, headers=HEADERS).data.decode('utf-8'))
+              AWSUserSegmentGroup=SegmentGroupData['list'][0]
+              AWSUserSegmentGroupId=AWSUserSegmentGroup['id']
+              NoSegments=len(AWSUserSegmentGroup['applications'])
+              SGURL='https://'+zscaler_base+'/mgmtconfig/v1/admin/customers/'+company+'/segmentGroup?page=&pagesize=&search=AWS_Admin'
+              SegmentGroupData=json.loads(http.request('GET',SGURL, headers=HEADERS).data.decode('utf-8'))
+              AWSAdminSegmentGroup=SegmentGroupData['list'][0]
+              AWSAdminSegmentGroupId=AWSAdminSegmentGroup['id']
+
+              #If segmentgroup size=1 then delete Groups and Policy
+              if NoSegments==1:
+                i=0
+                length=len(policySet['rules'])
+                while i < length:
+                  if policySet['rules'][i]['name'] == "AWS Created":
+                    print(i)
+                    ruleId=policySet['rules'][i]['id']
+                    PolicyURL='https://'+zscaler_base+'/mgmtconfig/v1/admin/customers/'+company+'/policySet/'+policySetId+'/rule/'+ruleId
+                    delete=http.request('DELETE',PolicyURL, headers=HEADERS).data.decode('utf-8')
+                  i += 1
+                SGDelURL='https://'+zscaler_base+'/mgmtconfig/v1/admin/customers/'+company+'/segmentGroup/'+AWSUserSegmentGroupId
+                delete=http.request('DELETE',SGDelURL, headers=HEADERS).data.decode('utf-8')
+                SGDelURL='https://'+zscaler_base+'/mgmtconfig/v1/admin/customers/'+company+'/segmentGroup/'+AWSAdminSegmentGroupId
+                delete=http.request('DELETE',SGDelURL, headers=HEADERS).data.decode('utf-8')
+
+              #Delete Application Segments
+              ASURL='https://'+zscaler_base+'/mgmtconfig/v1/admin/customers/'+company+'/application?page=&pagesize=&search=AWS_User_'+segment_name
+              AWSUserSegment=json.loads(http.request('GET',ASURL, headers=HEADERS).data.decode('utf-8'))['list'][0]['id']
+              ASDelURL='https://'+zscaler_base+'/mgmtconfig/v1/admin/customers/'+company+'/application/'+AWSUserSegment
+              delete=http.request('DELETE',ASDelURL, headers=HEADERS).data.decode('utf-8')
+
+              ASURL='https://'+zscaler_base+'/mgmtconfig/v1/admin/customers/'+company+'/application?page=&pagesize=&search=AWS_Admin_'+segment_name
+              AWSAdminSegment=json.loads(http.request('GET',ASURL, headers=HEADERS).data.decode('utf-8'))['list'][0]['id']
+              ASDelURL='https://'+zscaler_base+'/mgmtconfig/v1/admin/customers/'+company+'/application/'+AWSAdminSegment
+              delete=http.request('DELETE',ASDelURL, headers=HEADERS).data.decode('utf-8')
+
+              response['Data']={}
+              cfnresponse.send(event, context, cfnresponse.SUCCESS, responseData, physicalResourceId)
+              return
+
+
+            if event['RequestType'] == 'Create':
+              #Segment Groups - Check if created already, otherwise create
+              SGURL='https://'+zscaler_base+'/mgmtconfig/v1/admin/customers/'+company+'/segmentGroup?page=&pagesize=&search=AWS_User'
+              SegmentGroupData=json.loads(http.request('GET',SGURL, headers=HEADERS).data.decode('utf-8'))
+              if int(SegmentGroupData['totalPages']) > 0:
+                AWSUserSegmentGroup=SegmentGroupData['list'][0]['id']
+              else:
+                postdata={"configSpace": "DEFAULT","description": "AWS User Access Segments","enabled": "true","name": "AWS_User"}
+                SGPOSTURL='https://'+zscaler_base+'/mgmtconfig/v1/admin/customers/'+company+'/segmentGroup'
+                AWSUserSegmentGroup=json.loads(http.request('POST',SGPOSTURL, body=json.dumps(postdata).encode('utf-8'), headers=HEADERS).data.decode('utf-8'))['id']
+            
+              SGURL='https://'+zscaler_base+'/mgmtconfig/v1/admin/customers/'+company+'/segmentGroup?page=&pagesize=&search=AWS_Admin'
+              SegmentGroupData=json.loads(http.request('GET',SGURL, headers=HEADERS).data.decode('utf-8'))
+              if int(SegmentGroupData['totalPages']) > 0:
+                AWSAdminSegmentGroup=SegmentGroupData['list'][0]['id']
+              else:
+                postdata={"configSpace": "DEFAULT","description": "AWS User Access Segments","enabled": "true","name": "AWS_Admin"}
+                SGPOSTURL='https://'+zscaler_base+'/mgmtconfig/v1/admin/customers/'+company+'/segmentGroup'
+                AWSAdminSegmentGroup=json.loads(http.request('POST',SGPOSTURL, body=json.dumps(postdata).encode('utf-8'), headers=HEADERS).data.decode('utf-8'))['id']
+            
+              #Retrieve ServerGroup ID
+              ServerGroupURL='https://'+zscaler_base+'/mgmtconfig/v1/admin/customers/'+company+'/serverGroup?page=&pagesize=&search=AWS-'+Region+'-'+VPCID
+              ServerGroup=json.loads(http.request('GET',ServerGroupURL, headers=HEADERS).data.decode('utf-8'))['list'][0]['id']
+              #Create Post data - Create User Application Segment
+              postdata={
+                "segmentGroupId": AWSUserSegmentGroup,
+                "bypassType": "NEVER",
+                "configSpace": "DEFAULT",
+                "description": "AWS Cloudformation Created Segment",
+                "domainNames": applications.split(','),
+                "doubleEncrypt": "false",
+                "enabled": "true",
+                "healthCheckType": "DEFAULT",
+                "healthReporting": "NONE",
+                "icmpAccessType": "PING_TRACEROUTING",
+                "name": "AWS_User_"+segment_name,
+                "passiveHealthEnabled": "true",
+                "serverGroups": [
+                  {
+                    "id": ServerGroup
+                  }
+                ],
+                "tcpPortRange": [
+                  {
+                    "from": userport,
+                    "to": userport
+                  }
+                ]
+                }
+              
+              AppSegmentURL='https://'+zscaler_base+'/mgmtconfig/v1/admin/customers/'+company+'/application'
+              AppSegment=json.loads(http.request('POST',AppSegmentURL,body=json.dumps(postdata).encode('utf-8'), headers=HEADERS).data.decode('utf-8'))['id']
+
+              #Create Post data - Create Admin Application Segment
+              postdata={
+                "segmentGroupId": AWSAdminSegmentGroup,
+                "bypassType": "NEVER",
+                "configSpace": "DEFAULT",
+                "description": "AWS Cloudformation Created Segment",
+                "domainNames": applications.split(','),
+                "doubleEncrypt": "false",
+                "enabled": "true",
+                "healthCheckType": "DEFAULT",
+                "healthReporting": "NONE",
+                "icmpAccessType": "PING_TRACEROUTING",
+                "name": "AWS_Admin_"+segment_name,
+                "passiveHealthEnabled": "true",
+                "serverGroups": [
+                  {
+                    "id": ServerGroup
+                  }
+                ],
+                "tcpPortRange": [
+                  {
+                    "from": adminport,
+                    "to": adminport
+                  }
+                ]
+                }
+            
+              AppSegmentURL='https://'+zscaler_base+'/mgmtconfig/v1/admin/customers/'+company+'/application'
+              AppSegment=json.loads(http.request('POST',AppSegmentURL,body=json.dumps(postdata).encode('utf-8'), headers=HEADERS).data.decode('utf-8'))['id']
+            
+              #Create Policy if not already created
+              Global='https://'+zscaler_base+'/mgmtconfig/v1/admin/customers/'+company+'/policySet/global'
+              policy=json.loads(http.request('GET',Global,headers=HEADERS).data.decode('utf-8'))
+              policySet=policy['id']
+
+              created=False
+              rule=0
+              while rule < len(policy['rules']):
+                if policy['rules'][rule]['name']=="AWS Created":
+                  created=True
+                rule += 1
+
+              if not created:                  
+                PolicyURL='https://'+zscaler_base+'/mgmtconfig/v1/admin/customers/'+company+'/policySet/'+policySet+'/rule'
+                postdata={
+                  "action": "ALLOW",
+                  "bypassDefaultRule": "true",
+                  "conditions": [
+                    {
+                      "negated": "false",
+                      "operands": [
+                        {
+                          "lhs": "id",
+                          "objectType": "APP_GROUP",
+                          "rhs": AWSAdminSegmentGroup
+                        },
+                        {
+                          "lhs": "id",
+                          "objectType": "APP_GROUP",
+                          "rhs": AWSUserSegmentGroup
+                        }
+                      ],
+                      "operator": "OR"
+                    }
+                  ],
+                  "defaultRule": "false",
+                  "description": "AWS Created",
+                  "name": "AWS Created",
+                  "ruleOrder": 0
+                }
+                rule=json.loads(http.request('POST',PolicyURL,body=json.dumps(postdata).encode('utf-8'), headers=HEADERS).data.decode('utf-8'))['id']          
+              response['Data']={}
+              cfnresponse.send(event, context, cfnresponse.SUCCESS, responseData, physicalResourceId)
+    Metadata:
+      'AWS::CloudFormation::Designer':
+        id: aba2ff12-eced-4970-8de3-a2f4de307655
+  CustomLambdaCreateSegments:
+    Type: 'Custom::LambdaCreateSegments'
+    DependsOn:
+      - LambdaCreateSegments
+    Properties:
+      ServiceToken: !GetAtt LambdaCreateSegments.Arn
+      Region: !Ref 'AWS::Region'
+      ParameterKeys: !Join 
+        - ','
+        - - !Sub ZSAC-ClientID
+          - !Sub ZSAC-ClientSecret
+          - !Sub ZSAC-CompanyID
+          - !Sub ZSAC-Base
+      Applications: !Join 
+        - ','
+        - - !Ref ZPA1DNS
+          - !Ref ZPA2DNS
+      Adminport: !Ref AdminPort
+      Userport: !Ref UserPort
+      VPCID: !Ref VpcId
+      SegmentName: Connectors
+    Metadata:
+      'AWS::CloudFormation::Designer':
+        id: a9548794-6e9f-4a03-b70a-b5f7577cd422
+  LambdaFunctionZPACreate:
+    Type: 'AWS::Lambda::Function'
+    DependsOn:
+      - ZSACFunctionRole
+      - ZSACEncryptionKey
+    Properties:
+      Description: >-
+        Read API Variables.  Connect to API.  Create Provisioning Key, Connector
+        Group, Server Group
+      FunctionName: CreateZPAProvisioningKeyConnectorGroupServerGroup
+      Role: !GetAtt ZSACFunctionRole.Arn
+      Timeout: 10
+      Handler: index.lambda_handler
+      Runtime: python3.8
+      Code:
+        ZipFile: |
+          import boto3
+          import json
+          import cfnresponse
+          import logging
+          import urllib3
+
+          logger = logging.getLogger()
+
+          def lambda_handler(event, context):
+            # Creating response object
+            response = {
+              'StackId': event['StackId'],
+              'RequestId': event['RequestId'],
+              'LogicalResourceId': event['LogicalResourceId'],
+              'Status': 'SUCCESS',
+              'Data': {},
+              'physicalResourceId': {}
+            }
+            responseData = {}
+            physicalResourceId = {}
+
+            # Read the values of the parameter we passed in. Comma Delimited List of  
+            # ParameterKeys and ParameterValues and KmsKeyId need to be passed.
+            parameter_keys = event['ResourceProperties']['ParameterKeys']
+            parameter_key_list = parameter_keys.split(',')
+            kms_key_id = event['ResourceProperties']['KmsKeyId']
+            Region=event['ResourceProperties']['Region']
+            VPCID=event['ResourceProperties']['VPCID']
+
+            logger.debug(parameter_key_list)
+            length = len(parameter_key_list)
+            i = 0
+            
+            client = boto3.client('ssm')
+
+            while i < length:
+               ssm_response = client.get_parameter(
+                    Name = parameter_key_list[i],
+                    WithDecryption=True
+               )
+               if "ZSAC-ClientID" in parameter_key_list[i]:
+                    client_id=ssm_response["Parameter"]["Value"]
+               if "ZSAC-ClientSecret" in parameter_key_list[i]:
+                    client_secret=ssm_response["Parameter"]["Value"]
+               if "ZSAC-CompanyID" in parameter_key_list[i]:
+                    company=ssm_response["Parameter"]["Value"]
+               if "ZSAC-Base" in parameter_key_list[i]:
+                    zscaler_base=ssm_response["Parameter"]["Value"]
+               i += 1
+
+
+            #From AWS Region - Calculate Location, Latitude & Longitide
+            
+            aws_regions = {
+                "us-east-1":{"Location":"Virginia,US", "Latitude":"38.0339", "Longitude":"-78.4860"},
+                "us-east-2":{"Location":"Ohio,US", "Latitude":"40.4167", "Longitude":"-82.9167"},
+                "us-west-1":{"Location":"California,US", "Latitude":"37.7749", "Longitude":"-122.4194"},
+                "us-west-2":{"Location":"Oregon,US", "Latitude":"45.5200", "Longitude":"-122.6819"},
+                "ca-central-1":{"Location":"Canada,CA", "Latitude":"43.6532", "Longitude":"-79.3832"},
+                "ap-south-1":{"Location":"Mumbai,IN", "Latitude":"19.0760", "Longitude":"72.8777"},
+                "ap-northeast-2":{"Location":"Seoul,KR", "Latitude":"37.5665", "Longitude":"126.9780"},
+                "ap-southeast-1":{"Location":"Singapore,SG", "Latitude":"1.3521", "Longitude":"103.8198"},
+                "ap-southeast-2":{"Location":"Sydney,AU", "Latitude":"-33.8688", "Longitude":"151.2093"},
+                "ap-northeast-1":{"Location":"Tokyo,JP", "Latitude":"35.6895", "Longitude":"139.6917"},
+                "eu-central-1":{"Location":"Frankfurt,DE", "Latitude":"50.1147", "Longitude":"8.6821"},
+                "eu-west-1":{"Location":"Ireland,IE", "Latitude":"53.4129", "Longitude":"-8.2439"},
+                "eu-west-2":{"Location":"London,UK", "Latitude":"51.5074", "Longitude":"-0.1278"},
+                "eu-west-3":{"Location":"Paris,FR", "Latitude":"48.8566", "Longitude":"2.3522"},
+                "sa-east-1":{"Location":"Sao Paulo,BR", "Latitude":"-23.5505", "Longitude":"-46.6333"}
+            }
+
+            #Login to API and retrieve bearer token
+
+            data={'client_id':client_id,'client_secret':client_secret}
+            URL='https://'+zscaler_base+'/signin'
+            http = urllib3.PoolManager()
+            bearer=json.loads(http.request('POST',URL, fields=data).data.decode('utf-8'))["access_token"]
+            HEADERS={'authorization':'Bearer %s' % bearer,'accept': '*/*','Content-Type': 'application/json'}
+
+            #Setup URLs
+            CGURL='https://'+zscaler_base+'/mgmtconfig/v1/admin/customers/'+company+'/appConnectorGroup'
+            PKURL='https://'+zscaler_base+'/mgmtconfig/v1/admin/customers/'+company+'/associationType/CONNECTOR_GRP/provisioningKey'
+            ECURL='https://'+zscaler_base+'/mgmtconfig/v2/admin/customers/'+company+'/enrollmentCert?page=&pagesize=&search=connector'
+            SGURL='https://'+zscaler_base+'/mgmtconfig/v1/admin/customers/'+company+'/serverGroup'
+            SGSearchURL='https://'+zscaler_base+'/mgmtconfig/v1/admin/customers/'+company+'/serverGroup?page=&pagesize=&search=AWS-'+Region+'-'+VPCID
+            CGSearchURL='https://'+zscaler_base+'/mgmtconfig/v1/admin/customers/'+company+'/appConnectorGroup?page=&pagesize=&search='+Region+'-'+VPCID
+
+            #Handle Delete - Retrive ServerGroup and ConnectorGroup information, Delete each, Return
+            if event['RequestType'] == 'Delete':
+              ServerGroupData=json.loads(http.request('GET',SGSearchURL, headers=HEADERS).data.decode('utf-8'))['list'][0]
+              ServerGroupID=ServerGroupData['id']
+              ConnectorGroupID=ServerGroupData['appConnectorGroups'][0]['id']
+              SGDelURL='https://'+zscaler_base+'/mgmtconfig/v1/admin/customers/'+company+'/serverGroup/'+ServerGroupID
+              CGDelURL='https://'+zscaler_base+'/mgmtconfig/v1/admin/customers/'+company+'/appConnectorGroup/'+ConnectorGroupID
+              SGDel=http.request('DELETE',SGDelURL, headers=HEADERS)
+              CGDel=http.request('DELETE',CGDelURL, headers=HEADERS)
+              cfnresponse.send(event, context, cfnresponse.SUCCESS, responseData, physicalResourceId)
+              return
+
+            #Retrieve Enrollment certificate ID - MUST find one called "connector" - will use first one it finds
+            enrollmentcertId=json.loads(http.request('GET',ECURL, headers=HEADERS).data.decode('utf-8'))['list'][0]['id']
+
+            #Calculate Location information from Region, and Generate POST data for Connector Group
+            ConnectorGroupPostData={
+              "description": Region+"-"+VPCID,
+              "dnsQueryType": "IPV4_IPV6",
+              "enabled": "true",
+              "latitude": aws_regions[Region]['Latitude'],
+              "location": aws_regions[Region]['Location'],
+              "longitude": aws_regions[Region]['Longitude'],
+              "name": Region+"-"+VPCID,
+              "overrideVersionProfile": "true",
+              "lssAppConnectorGroup": "false",
+              "upgradeDay": "SUNDAY",
+              "upgradeTimeInSecs": "82800",
+              "versionProfileId": "0"
+            }
+
+            #Create Connector Group
+            ConnectorGroupID=json.loads(http.request('POST',CGURL, body=json.dumps(ConnectorGroupPostData).encode('utf-8'), headers=HEADERS).data.decode('utf-8'))["id"]
+
+            #Generate Provisioning Key POST data
+            ProvisioningKeyPostData={
+              "appConnectorGroupId": ConnectorGroupID,
+              "enabled": "true",
+              "maxUsage": 1000,
+              "name": Region+"-"+VPCID,
+              "enrollmentCertId": enrollmentcertId
+            }
+
+            ProvisioningKey=json.loads(http.request('POST',PKURL, body=json.dumps(ProvisioningKeyPostData).encode('utf-8'), headers=HEADERS).data.decode('utf-8'))
+
+            ServerGroupPostData={
+              "appConnectorGroups":[{"id": ConnectorGroupID}],
+              "configSpace": "DEFAULT",
+              "description": "AWS-"+Region+"-"+VPCID,
+              "enabled": "true",
+              "dynamicDiscovery": "true",
+              "name": "AWS-"+Region+"-"+VPCID
+            }
+            ServerGroup=json.loads(http.request('POST',SGURL, body=json.dumps(ServerGroupPostData).encode('utf-8'), headers=HEADERS).data.decode('utf-8'))
+            response['Data']={}
+            cfnresponse.send(event, context, cfnresponse.SUCCESS, responseData, physicalResourceId)
+    Metadata:
+      'AWS::CloudFormation::Designer':
+        id: 77870010-74ba-4a0e-a2c3-57e811dc59ac
+  CreateZPAProvisioningKeyConnectorGroupServerGroup:
+    Type: 'Custom::CreateGroupsAndPK'
+    DependsOn:
+      - LambdaFunctionZPACreate
+    Properties:
+      ServiceToken: !GetAtt LambdaFunctionZPACreate.Arn
+      Region: !Ref 'AWS::Region'
+      ParameterKeys: !Join 
+        - ','
+        - - !Sub ZSAC-ClientID
+          - !Sub ZSAC-ClientSecret
+          - !Sub ZSAC-CompanyID
+          - !Sub ZSAC-Base
+      KmsKeyId: !Sub 'arn:aws:kms:${AWS::Region}:${AWS::AccountId}:alias/ZSACKey'
+      VPCID: !Ref VpcId
+    Metadata:
+      'AWS::CloudFormation::Designer':
+        id: 75a0fa73-469b-4eee-ad42-1fed6f607b87
+  Route53LambdaRole:
+    Properties:
+      AssumeRolePolicyDocument:
+        Statement:
+          - Action:
+              - 'sts:AssumeRole'
+            Effect: Allow
+            Principal:
+              Service:
+                - lambda.amazonaws.com
+        Version: 2012-10-17
+      Policies:
+        - PolicyDocument:
+            Statement:
+              - Action:
+                  - 'route53:DisassociateVPCFromHostedZone'
+                  - 'route53:AssociateVPCWithHostedZone'
+                Effect: Allow
+                Resource:
+                  - 'arn:aws:route53:::hostedzone/*'
+                  - 'arn:aws:ec2:*:*:vpc/*'
+            Version: 2012-10-17
+          PolicyName: Route53AssociateDisassociate
+        - PolicyDocument:
+            Statement:
+              - Action:
+                  - 'ec2:DescribeVpcs'
+                  - 'route53:ListHostedZones'
+                Effect: Allow
+                Resource: '*'
+            Version: 2012-10-17
+          PolicyName: Route53ListZonesVPCs
+    Type: 'AWS::IAM::Role'
+    Metadata:
+      'AWS::CloudFormation::Designer':
+        id: 467fadfa-e1ae-40fe-a5ed-f4c1b0a06208
+  UpdateR53:
+    Type: 'AWS::Lambda::Function'
+    Properties:
+      Description: Associate new VPC with R53 Private Zone
+      FunctionName: UpdateRoute53
+      Role: !GetAtt Route53LambdaRole.Arn
+      Timeout: 10
+      Handler: index.lambda_handler
+      Runtime: python3.8
+      Code:
+        ZipFile: |
+          import boto3
+          import cfnresponse
+          import logging
+          import urllib3
+
+          logger = logging.getLogger()
+
+          def lambda_handler(event, context):
+            # Creating response object
+            response = {
+              'StackId': event['StackId'],
+              'RequestId': event['RequestId'],
+              'LogicalResourceId': event['LogicalResourceId'],
+              'Status': 'SUCCESS',
+              'Data': {},
+              'physicalResourceId': {}
+            }
+            responseData = {}
+            physicalResourceId = {}
+            
+            VPCID = event['ResourceProperties']['VPCID']
+            VPCREGION = event['ResourceProperties']['Region']
+            HOSTEDZONEID = event['ResourceProperties']['HOSTEDZONEID']
+
+            client = boto3.client('route53')
+
+            #Handle Delete - Disassociate VPC from Route53 Private Zone
+            if event['RequestType'] == 'Delete':
+              response=client.disassociate_vpc_from_hosted_zone(HostedZoneId=HOSTEDZONEID,VPC={'VPCRegion': VPCREGION,'VPCId': VPCID})
+              cfnresponse.send(event, context, cfnresponse.SUCCESS, responseData, physicalResourceId)
+              return
+            #Handle Create - Associate VPC with Route53 Private Zone
+            response = client.associate_vpc_with_hosted_zone(HostedZoneId=HOSTEDZONEID,VPC={'VPCRegion': VPCREGION,'VPCId': VPCID})
+            response['Data']={}
+            cfnresponse.send(event, context, cfnresponse.SUCCESS, responseData, physicalResourceId)
+    Metadata:
+      'AWS::CloudFormation::Designer':
+        id: d0c9aab7-b1e9-47a9-93b3-33b00f64000d
+  UpdateRoute53:
+    Type: 'Custom::UpdateRoute53'
+    DependsOn:
+      - UpdateR53
+    Properties:
+      ServiceToken: !GetAtt UpdateR53.Arn
+      Region: !Ref 'AWS::Region'
+      HOSTEDZONEID: !Ref HostedZoneId
+      VPCID: !Ref VpcId
+    Metadata:
+      'AWS::CloudFormation::Designer':
+        id: 9e9f6f0c-ce86-4f13-b9d2-d938229422e4
+  CreateSecureStringZWS:
+    Type: 'Custom::CreateSecureStringZWS'
+    DependsOn:
+      - ZSACFunctionRole
+      - ZSACEncryptionKey
+    Properties:
+      ServiceToken: !GetAtt LambdaFunctionSSM.Arn
+      Region: !Ref 'AWS::Region'
+      ParameterKeys: !Join 
+        - ','
+        - - !Sub ZWS-Key
+          - !Sub ZWS-Cert
+          - !Sub ZWS-ClientID
+          - !Sub ZWS-ClientSecret
+          - !Sub ZWS-SiteID
+          - !Sub ZWS-URLRoot
+      ParameterValues: !Join 
+        - ','
+        - - !Ref ZWSKey
+          - !Ref ZWSCert
+          - !Ref ZWSClientID
+          - !Ref ZWSClientSecret
+          - !Ref ZWSSiteID
+          - !Ref ZWSURLRoot
+      ParameterDescriptions: !Join 
+        - ','
+        - - ZWS Client Certificate Private Key
+          - ZWS Client Certificate
+          - ZWS API Client ID
+          - ZWS API Client Secret
+          - ZWS Site ID
+          - ZWS URL Root
+      KmsKeyId: !Sub 'arn:aws:kms:${AWS::Region}:${AWS::AccountId}:alias/ZSACKey'
+    Metadata:
+      'AWS::CloudFormation::Designer':
+        id: 20bde93e-1350-4327-a954-b5265ec91018
+Outputs:
+  StackName:
+    Description: Stack name.
+    Value: !Sub '${AWS::StackName}'
+    Export:
+      Name: !Sub '${AWS::StackName}-stack-name'
+  PrivateSubnet1CIDR:
+    Description: PrivateSubnet1 CIDR
+    Value: !Ref PrivateSubnet1CIDR
+    Export:
+      Name: !Sub '${AWS::StackName}-PrivateSubnet1CIDR'
+  PrivateSubnet2CIDR:
+    Description: PrivateSubnet2 CIDR
+    Value: !Ref PrivateSubnet2CIDR
+    Export:
+      Name: !Sub '${AWS::StackName}-PrivateSubnet2CIDR'
+  ZPA1DNS:
+    Description: Fully qualified domain name
+    Value: !Ref ZPA1DNS
+    Export:
+      Name: !Sub '${AWS::StackName}-ZPA1DNS'
+  ZPA2DNS:
+    Description: Fully qualified domain name
+    Value: !Ref ZPA2DNS
+    Export:
+      Name: !Sub '${AWS::StackName}-ZPA2DNS'
+  VPCID:
+    Description: VPC Created
+    Value: !Ref VpcId
+    Export:
+      Name: !Sub '${AWS::StackName}-VPCID'
+  AvailabilityZone1:
+    Description: Availability Zones
+    Value: !Select 
+      - '0'
+      - !Ref AvailabilityZones
+    Export:
+      Name: !Sub '${AWS::StackName}-AZ1'
+  AvailabilityZone2:
+    Description: Availability Zones
+    Value: !Select 
+      - '1'
+      - !Ref AvailabilityZones
+    Export:
+      Name: !Sub '${AWS::StackName}-AZ2'
+  ZSACInstanceRole:
+    Description: EC2 Instance Role
+    Value: !Ref ZSACInstanceRole
+    Export:
+      Name: !Sub '${AWS::StackName}-InstanceRole'
+  NATGateway1:
+    Description: NAT Gateway 1
+    Value: !Ref NATGateway1
+    Export:
+      Name: !Sub '${AWS::StackName}-NATGateway1'
+  NATGateway2:
+    Description: NAT Gateway 2
+    Value: !Ref NATGateway2
+    Export:
+      Name: !Sub '${AWS::StackName}-NATGateway2'
+  LambdaCreateSegments:
+    Description: Lambda Segments Function
+    Value: !GetAtt LambdaCreateSegments.Arn
+    Export:
+      Name: !Sub '${AWS::StackName}-LambdaCreateSegments'
+  HostedZoneId:
+    Description: HostedZoneId
+    Value: !Ref HostedZoneId
+    Export:
+      Name: !Sub '${AWS::StackName}-HostedZoneId'
+  HostedZoneName:
+    Description: HostedZoneName
+    Value: !Ref HostedZoneName
+    Export:
+      Name: !Sub '${AWS::StackName}-HostedZoneName'
+  AppConnectorSecurityGroup:
+    Description: AppConnectorSecurityGroup
+    Value: !Ref AppConnectorSecurityGroup
+    Export:
+      Name: !Sub '${AWS::StackName}-AppConnectorSecurityGroup'
