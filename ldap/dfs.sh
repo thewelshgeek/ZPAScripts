@@ -1,12 +1,5 @@
-#!/bin/bash
-#Script creates Kerberos configuration on CentOs server (App Connector) and installs Samba/CIFS clinet
-#Enumerates Active Directory Domain Controllers
-#Connects to AD DFS Mountpoint for GPO across all resolvable servers (A Record for domain) - Authenticated via NTLM
-#Connects to AD Servers directly (SRV Record for _ldap._tcp.domain.com) - Authenticated via Kerberos
-
-#yum install krb5-libs, krb5-workstation, samba-client samba-common cifs-utils -y
 read -p "Username: " username
-echo -n Password: 
+echo -n Password:
 read -s password
 echo
 read -p "Domain: " domain
@@ -55,16 +48,16 @@ do
    mount //${domain}/sysvol /mnt/smb -osec=ntlmv2,domain=${domain},username=${username},password=${password},ip=${eachIP} 2> /dev/null
    files=`ls -l /mnt/smb`
    if [[ "$files" == "total 0" ]]; then
-   	 echo Failed to mount ${domain}\\SYSVOL at IP ${eachIP} using NTLM
+       echo Failed to mount ${domain}\\SYSVOL at IP ${eachIP} using NTLM
    else
-   	 echo Mounted ${domain}\\SYSVOL at IP ${eachIP} .  Contents of ${domain} directory
-   	 ls /mnt/smb/${domain}
+       echo Mounted ${domain}\\SYSVOL at IP ${eachIP} .  Contents of ${domain} directory
+       ls /mnt/smb/${domain}
    fi
    umount /mnt/smb 2> /dev/null
 done
 
 echo Finished DFS Mounts
-echo 
+echo
 echo Starting Server Mounts of Sysvol Shares
 echo
 
@@ -78,13 +71,17 @@ do
    mount //$host/sysvol /mnt/smb -osec=krb5 2> /dev/null
    files=`ls -l /mnt/smb`
    if [[ "$files" == "total 0" ]]; then
-   	 echo Failed to mount ${host}\\SYSVOL using Kerberos
+       echo Failed to mount ${host}\\SYSVOL using Kerberos
    else
-   	 echo Mounted ${host}\\SYSVOL .  Contents of ${domain} directory
-   	 ls /mnt/smb/${domain}
+       echo Mounted ${host}\\SYSVOL .  Contents of ${domain} directory
+       ls /mnt/smb/${domain}
    fi
    umount /mnt/smb 2> /dev/null
 done
+
+echo
+echo Kerberos Tickets received during connections
+klist | grep ${domain^^}
 
 #Cleanup mount points and Kerberos tickets
 rmdir  /mnt/smb
