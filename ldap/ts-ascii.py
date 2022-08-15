@@ -24,6 +24,39 @@ for a in range(len(ts)):
 
 errors=[]
 messageID=''
+files=[]
+#Get all SMB Filenames
+for a in range(len(ts)):
+	if 'smb2.cmd' in ts[a]['_source']['layers']:
+		if ts[a]['_source']['layers']['smb2.cmd'][0]=='5' and 'smb2.fid' not in ts[a]['_source']['layers']:
+			data=json.loads('{}')
+			if 'smb2.filename' in ts[a]['_source']['layers']:
+				file={'filename':ts[a]['_source']['layers']['smb2.filename'][0]}
+			else:
+				file={'filename':'unknown'}
+			data.update(file)
+			file={'msgid':[ts[a]['_source']['layers']['smb2.msg_id'][0]]}
+			data.update(file)
+			files.append(data)
+		if 'smb2.cmd' in ts[a]['_source']['layers'] and 'smb2.filename' not in ts[a]['_source']['layers']:
+			if 'smb2.fid' in ts[a]['_source']['layers']:
+				msgid=[ts[a]['_source']['layers']['smb2.msg_id'][0]]
+				for file in files:
+					if msgid==file['msgid']:
+						file['fid']=ts[a]['_source']['layers']['smb2.fid'][0]
+
+#update SMB Filenames in Structure					
+for a in range(len(ts)):
+	if 'smb2.msg_id' in ts[a]['_source']['layers']:
+		msgid=ts[a]['_source']['layers']['smb2.msg_id']
+		for each in files:
+			if each['msgid'] == msgid:
+				if 'fid' in each:
+					ts[a]['_source']['layers']['FID']=each['fid']
+				if 'filename' in each:
+					ts[a]['_source']['layers']['FNAME']=each['filename']
+
+#Pull LDAP Attributes.  Extract SMB Data.  Update Errors file - extract filename	
 for a in range(len(ts)):
 	if 'ldap.AttributeValue' in ts[a]['_source']['layers']:
 		if ':' in ts[a]['_source']['layers']['ldap.AttributeValue'][0]:
@@ -38,7 +71,7 @@ for a in range(len(ts)):
 		if 'data' in ts[a]['_source']['layers']:
 			data=ts[a]['_source']['layers']['data'][0]
 			try:
-				data=codecs.decode(data,"hex").decode('utf-8')
+				data=codecs.decode(data,'hex').decode('utf-8','ignore').replace('\x00','')
 			except:
 				False
 			ts[a]['_source']['layers']['data'][0]=data
@@ -52,6 +85,9 @@ for a in range(len(ts)):
 							data=json.loads('{}')
 							error={'Error Response':ts[a]['_source']['layers']['_ws.col.Info'][0]}
 							data.update(error)
+							if 'FNAME' in ts[a]['_source']['layers']:
+								error={'Filename':ts[a]['_source']['layers']['FNAME']}
+								data.update(error)
 							for b in range(a):
 								if 'smb2.msg_id' in ts[b]['_source']['layers'] and 'smb2.cmd' in ts[b]['_source']['layers']:
 									if ts[b]['_source']['layers']['smb2.msg_id'][0]==ts[a]['_source']['layers']['smb2.msg_id'][0]:
@@ -66,6 +102,8 @@ for a in range(len(ts)):
 										if 'NTLM' in ts[c]['_source']['layers']['_ws.col.Info'][0]:
 											if 'User' in  ts[c]['_source']['layers']['_ws.col.Info'][0]:
 												user=ts[c]['_source']['layers']['_ws.col.Info'][0].split(': ')[1]
+											else:
+												user='unknown'
 											error={'Ticket':'NTLM'}
 											data.update(error)
 											error={'User':user}
@@ -88,6 +126,7 @@ for a in range(len(ts)):
 													error={'Ticket':ts[d]['_source']['layers']['kerberos.CNameString'][0]}
 													data.update(error)
 							errors.append(data)
+
 	if 'http.response.code' in ts[a]['_source']['layers']:
 		if 'data' in ts[a]['_source']['layers']:
 			data=ts[a]['_source']['layers']['data'][0]
@@ -106,7 +145,8 @@ for a in range(len(ts)):
 		for each in dns:
 			if each['ip']==IP:
 				ts[a]['_source']['layers']['hostname.dst']=each['fqdn']
-			
+
+
 with open('./errors.json', 'w') as outfile:
     json.dump(errors, outfile, indent=4)			
 
@@ -115,3 +155,7 @@ with open('./dns.json', 'w') as outfile:
 
 with open('./ts.json', 'w') as outfile:
     json.dump(ts, outfile, indent=4)
+
+with open('./files.json', 'w') as outfile:
+    json.dump(files, outfile, indent=4)
+
