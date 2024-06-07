@@ -1,4 +1,4 @@
-ZIAEndpoint: 'https://scim.zscalertwo.net/'
+ZIAEndpoint: 'https://scim.zscloud.net/'
 ZIABearer: '=='
 ZPAEndpoint: 'https://scim3.private.zscaler.com/scim/'
 ZPABearer: '=='
