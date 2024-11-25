@@ -36,7 +36,6 @@ admins=json.loads(requests.get(base+'/adminUsers',cookies=cookie_jar,headers=hea
 #Retrieve user list, where users are in group "Zscaler Admins"
 users=json.loads(requests.get(base+'/users?group=ZscalerAdmins',cookies=cookie_jar,headers=headers).content)
 
-
 #For each administrator - check if a corresponding user exists. 
 #If the user exists, update the Administrator with a Scope of Department, where Department is taken from the User 
 for admin in admins:
