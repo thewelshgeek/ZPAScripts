@@ -25,10 +25,10 @@ DNSDN='DC='+suffix+',CN=MicrosoftDNS,DC=DomainDnsZones,'+DN
 srvrecord=srvlookup.lookup("ldap",protocol="tcp",domain=suffix)
 
 #Construct JSON object of Active Directory Domain Controllers
-Controllers={}
+Controllers={"list":[]}
 n=0
 for controller in srvrecord:
-	Controllers[n]=controller.hostname
+	Controllers["list"].append(controller.hostname)
 	n=n+1
 
 #Bind to LDAP
@@ -41,7 +41,7 @@ time.sleep(1)
 #LDAP Search, return the AD Sites and their Subnets.  Put into JSON Object.
 sites=l.search_s(SitesDN,ldap.SCOPE_SUBTREE,'(&(objectClass=site)(!(cn=Default-First-Site-Name)))',['cn','siteObjectBL'])
 count=len(sites)
-Locations={}
+Locations={"list":[]}
 for n in range(0, count):
 	site=sites[n][1]['cn'][0].decode('utf-8')
 	try:
@@ -49,11 +49,12 @@ for n in range(0, count):
 	except:
 		sncount=0
 	if sncount>0:
-		Locations[n]={}
-		Locations[n]['site']=site
-		Locations[n]['subnets']={}
+		sitedata={}
+		sitedata["site"]=site
+		sitedata["subnets"]=[]
 		for m in range(0,sncount):
-			Locations[n]['subnets'][m]=sites[n][1]['siteObjectBL'][m].decode('utf-8').split(',')[0].split('=')[1]
+			sitedata["subnets"].append(sites[n][1]['siteObjectBL'][m].decode('utf-8').split(',')[0].split('=')[1])
+		Locations["list"].append(sitedata)
 
 print('Domain Controllers JSON')
 print()
